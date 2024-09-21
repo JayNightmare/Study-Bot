@@ -22,10 +22,12 @@ Submit an `Issue` and tell me what's wrong.
 
 ## Commands:
 <code align=center>
+
 | Command             | Description                          |
 |---------------------|--------------------------------------|
 | `/start duration:`  | Start the study session              |
 | `/status code:`     | Check the status of the session      |
 | `/stop code:`       | Stops the session                    |
 | `/leaderboard`      | View the server leaderboard          |
+
 </code>
