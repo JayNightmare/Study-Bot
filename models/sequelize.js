@@ -34,6 +34,14 @@ const Server = sequelize.define('Server', {
         allowNull: false,
         unique: true
     },
+    textChannelId: {
+        type: DataTypes.STRING,
+        allowNull: true // This can be null if not yet set
+    },
+    loggingChannelId: {
+        type: DataTypes.STRING,
+        allowNull: true // This can be null if not yet set
+    },
     customStudyDuration: {
         type: DataTypes.INTEGER,
         defaultValue: 25 // default 25 minutes
@@ -65,8 +73,20 @@ const Session = sequelize.define('Session', {
     active: {
         type: DataTypes.BOOLEAN,
         defaultValue: true // Marks if the session is currently active or ended
+    },
+    guildId: {
+        type: DataTypes.STRING,
+        allowNull: false
     }
+}, {
+    indexes: [
+        {
+            unique: false,
+            fields: ['userId', 'guildId', 'active']
+        }
+    ]
 });
+
 
 // Sync the models with the database
 sequelize.sync().then(() => {

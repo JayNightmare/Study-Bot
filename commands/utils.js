@@ -1,4 +1,5 @@
 const { User, Server, Session } = require('../models/sequelize.js');
+const { EmbedBuilder } = require('discord.js');
 let userSessions = new Map(); // Key: userId, Value: { channelId, joinTime }
 
 // * User Data:
@@ -23,49 +24,50 @@ async function updateUserStats(userId, serverId, studyTime) {
     }
 }
 
-async function addUserSession(userId, channelId, joinTime) {
-    // Check if there is an existing session for this user
+async function addUserSession(userId, channelId, joinTime, guildId) {
+    // Check if there is an existing active session for this user in the same server
     const existingSession = await Session.findOne({
-        where: { userId, channelId, active: true }
+        where: { userId, guildId, active: true }
     });
 
     if (existingSession) {
-        // Update join time if rejoining the same channel
+        // Update the session with new join time and channel ID
         existingSession.joinTime = joinTime;
+        existingSession.channelId = channelId;
         await existingSession.save();
-        console.log(`Updated session for user ${userId}`);
+        console.log(`Updated session for user ${userId} in guild ${guildId}`);
     } else {
         // Create a new session entry
         await Session.create({
             userId,
+            guildId,
             channelId,
             joinTime,
             active: true // Mark this session as active
         });
-        console.log(`Added session for user ${userId}`);
+        console.log(`Created a new session for user ${userId} in guild ${guildId}`);
     }
 }
 
-async function endUserSession(userId, channelId, leaveTime) {
-    // Find the active session for the user
+async function endUserSession(userId, channelId, leaveTime, guildId) {
+    // Find the active session for the user in the given server
     const session = await Session.findOne({
-        where: { userId, channelId, active: true }
+        where: { userId, guildId, active: true }
     });
 
     if (!session) {
-        console.error(`No active session found for user ${userId} in channel ${channelId}`);
+        console.error(`No active session found for user ${userId} in guild ${guildId}`);
         return 0;
     }
 
     // Calculate the duration the user spent in the session (in milliseconds)
     const sessionDuration = leaveTime - new Date(session.joinTime);
 
-    // Mark session as inactive and store the leave time
-    session.leaveTime = leaveTime;
-    session.active = false;
-    await session.save();
-
-    console.log(`Ended session for user ${userId}. Duration: ${sessionDuration} ms`);
+    // Remove the session after ending it
+    await Session.destroy({
+        where: { userId, guildId, active: true }
+    });
+    console.log(`Removed session for user ${userId} in guild ${guildId}`);
 
     // Return the session duration in milliseconds for point calculation
     return sessionDuration;
