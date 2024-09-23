@@ -52,7 +52,6 @@ const Server = sequelize.define('Server', {
     }
 });
 
-// Define the Session model
 const Session = sequelize.define('Session', {
     userId: {
         type: DataTypes.STRING,
@@ -62,9 +61,18 @@ const Session = sequelize.define('Session', {
         type: DataTypes.STRING,
         allowNull: false
     },
+    sessionCode: {
+        type: DataTypes.STRING,
+        allowNull: false, // Ensure session code is not null
+        unique: true
+    },
     joinTime: {
         type: DataTypes.DATE,
         allowNull: false
+    },
+    startTime: {
+        type: DataTypes.DATE,
+        allowNull: true
     },
     leaveTime: {
         type: DataTypes.DATE, // Nullable, to be filled when the user leaves the channel
@@ -77,12 +85,36 @@ const Session = sequelize.define('Session', {
     guildId: {
         type: DataTypes.STRING,
         allowNull: false
+    },
+    paused: {
+        type: DataTypes.BOOLEAN,
+        defaultValue: false 
+    },
+    remainingTime: {
+        type: DataTypes.INTEGER,
+        allowNull: true 
+    },
+    pointsPerMinute: {
+        type: DataTypes.INTEGER,
+        allowNull: true
+    },
+    duration: {
+        type: DataTypes.INTEGER,
+        allowNull: true
+    },
+    voiceChannelId: {
+        type: DataTypes.STRING, // Should be STRING to match Discord channel IDs
+        allowNull: false
+    },
+    voiceChannelName: {
+        type: DataTypes.STRING,
+        allowNull: false
     }
 }, {
     indexes: [
         {
             unique: false,
-            fields: ['userId', 'guildId', 'active']
+            fields: ['userId', 'guildId', 'active'] // To quickly find active sessions for a user
         }
     ]
 });

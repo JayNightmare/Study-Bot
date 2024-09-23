@@ -5,6 +5,7 @@ const { // * User Data:
         updateUserStats,
         addUserSession,
         endUserSession,
+        getUserData,
 
         // * Leaderboard Data:
         getLeaderboard,
@@ -75,6 +76,47 @@ const commands = [
             .setDescription('Select the logging channel for updates')
             .setRequired(true)
             .addChannelTypes(ChannelType.GuildText)
+    ),
+
+    new SlashCommandBuilder()
+    .setName('stats')
+    .setDescription('View your study stats or another user\'s stats')
+    .addUserOption(option =>
+        option.setName('user')
+            .setDescription('The user to view stats for')
+            .setRequired(false)
+    ),
+
+    new SlashCommandBuilder()
+    .setName('extend')
+    .setDescription('Extend the duration of the current study session')
+    .addStringOption(option =>
+        option.setName('code')
+            .setDescription('The session code')
+            .setRequired(true)
+    )
+    .addIntegerOption(option =>
+        option.setName('time')
+            .setDescription('Additional time in minutes')
+            .setRequired(true)
+    ),
+
+    new SlashCommandBuilder()
+    .setName('pause')
+    .setDescription('Pause an active study session')
+    .addStringOption(option =>
+        option.setName('code')
+            .setDescription('The session code')
+            .setRequired(true)
+    ),
+
+    new SlashCommandBuilder()
+    .setName('resume')
+    .setDescription('Resume a paused study session')
+    .addStringOption(option =>
+        option.setName('code')
+            .setDescription('The session code')
+            .setRequired(true)
     ),
 ];
 
@@ -149,9 +191,45 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options, guildId } = interaction;
 
-    if (commandName === 'start') {
+    // //
+
+    if (commandName === 'settextchannel') {
+        const channel = options.getChannel('channel');
+
+        // Find or create the server record in the database
+        let server = await Server.findOne({ where: { serverId: guildId } });
+        if (!server) {
+            server = await Server.create({ serverId: guildId });
+        }
+
+        // Update the text channel ID in the database
+        server.textChannelId = channel.id;
+        await server.save();
+
+        await interaction.reply(`Text channel has been set to ${channel}.`);
+    } 
+
+    // //
+
+    else if (commandName === 'start') {
         try {
             await interaction.deferReply();
+
+            const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+            const sessionStart = await Session.findOne({ where: { serverId: interaction.guild.id } });;
+
+            if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+                const embed = new EmbedBuilder()
+                    .setColor(0xE74C3C) // Red for error
+                    .setTitle('Invalid Channel')
+                    .setDescription('This command can only be used in the designated study session channel')
+                    .addFields({
+                        name: 'Study Session Channel',
+                        value: `<#${server.textChannelId}>`
+                    })
+                await interaction.editReply({ embeds: [embed], ephemeral: true });
+                return;
+            }
     
             const duration = interaction.options.getInteger('duration');
             const user = interaction.user;
@@ -166,19 +244,79 @@ client.on('interactionCreate', async interaction => {
                 await interaction.editReply({ embeds: [embed] });
                 return;
             }
+            // Check if the voice channel already has an active session
+            const activeSession = Array.from(sessions.values()).find(session => session.voiceChannelId === voiceChannel.id);
+
+            if (activeSession) {
+                // If a session is already active in this voice channel, prevent starting a new one
+                const embed = new EmbedBuilder()
+                    .setTitle('Active Session Already Running')
+                    .setDescription('There is already an active study session in this voice channel. You cannot start a new session until the current one ends.')
+                    .setColor(0xE74C3C); // Red for error
+                await interaction.editReply({ embeds: [embed], ephemeral: true });
+                return;
+            }
     
             // Generate a unique code for this session
             const sessionCode = generateSessionCode();
+
+            if (!sessionCode || !voiceChannel.id || !voiceChannel.name) {
+                console.error('Missing sessionCode, voiceChannelId, or voiceChannelName.');
+                return;
+            }
+
+            if (sessionCode === null || sessionStart.voiceChannelId === null || sessionStart.voiceChannelName === null) {
+                console.log("Session is null");
+                sessions.set(sessionCode, {
+                    userId: user.id,
+                    channelId: server.textChannelId,
+                    sessionCode: "",
+                    joinTime: Date.now(),
+                    startTime: Date.now(),
+                    voiceChannelId: 0,
+                    voiceChannelName: "",
+                    guildId: interaction.guild.id,
+                    pointsPerMinute: 1,
+                    duration,
+                    active: true, 
+                    paused: false, 
+                    remainingTime: duration
+                });
+            } else {
+                console.log("Session is not null");
+                sessions.set(sessionCode, {
+                    userId: user.id,
+                    channelId: server.textChannelId,
+                    sessionCode: sessionCode,
+                    joinTime: Date.now(),
+                    startTime: Date.now(),
+                    voiceChannelId: voiceChannel.id,
+                    voiceChannelName: voiceChannel.name,
+                    guildId: interaction.guild.id,
+                    pointsPerMinute: 1,
+                    duration,
+                    active: true, 
+                    paused: false, 
+                    remainingTime: duration
+                });
+            }
+            
+
     
-            // Store the session info
-            sessions.set(sessionCode, {
+            await Session.create({
                 userId: user.id,
-                voiceChannelId: voiceChannel.id,
-                startTime: Date.now(),
-                duration, 
-                voiceChannelName: voiceChannel.name,
+                channelId: server.textChannelId,
+                sessionCode: "", // Ensure sessionCode is passed
+                joinTime: new Date(), // Use current date as join time
+                startTime: new Date(), // Use current date as start time
+                voiceChannelId: voiceChannel.id, // Ensure voiceChannelId is passed
+                voiceChannelName: voiceChannel.name, // Ensure voiceChannelName is passed
                 guildId: interaction.guild.id,
-                pointsPerMinute: 1
+                pointsPerMinute: 1, // Points per minute rate
+                duration: duration, // Duration in minutes
+                active: true, // Session starts as active
+                paused: false, // Not paused initially
+                remainingTime: duration // Full duration available initially
             });
     
             // Optionally, update the voice channel name
@@ -202,37 +340,50 @@ client.on('interactionCreate', async interaction => {
                 if (session) {
                     // Rename the channel to "Study Completed"
                     await voiceChannel.setName("Study Completed").catch(console.error);
-    
+
                     // Award points to VC members
                     const points = session.pointsPerMinute * session.duration;
                     await awardPointsToVCMembers(voiceChannel, points);
-    
-                    // Send completion message to text channel
-                    const textChannel = interaction.guild.systemChannel || interaction.channel; // Adjust this to your desired text channel
-                    const embedDone = new EmbedBuilder()
-                        .setTitle('Well Done!')
-                        .setDescription(`You've studied for ${session.duration} minutes!`)
-                        .setColor(0x2ECC71); // Green for success
-                    await textChannel.send({ embeds: [embedDone] });
-    
-                    // Notify users of the points they earned
-                    voiceChannel.members.forEach(async member => {
-                        const memberEmbed = new EmbedBuilder()
-                            .setTitle('Study Points Earned')
-                            .setDescription(`You earned ${points} points for studying in this session!`)
-                            .setColor(0x3498DB); // Blue for info
-                        await member.send({ embeds: [memberEmbed] }).catch(console.error); // Send a DM to each member
+
+                    // Fetch the server settings from the database
+                    const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+                    // Determine the text channel for sending the message
+                    let textChannel;
+                    if (server && server.textChannelId) {
+                        // If a dedicated text channel has been set, use it
+                        textChannel = interaction.guild.channels.cache.get(server.textChannelId);
+                    } else {
+                        // If no dedicated text channel is set, use the channel where the interaction was invoked
+                        textChannel = interaction.channel;
+                    }
+
+                    // Collect members' point data
+                    let membersList = "";
+                    voiceChannel.members.forEach(member => {
+                        membersList += `${member.displayName} - ${points} points\n`;
                     });
-    
-                    sessions.delete(sessionCode); // Remove the session
+
+                    // Create a single embed with all the users and their points
+                    const embedDone = new EmbedBuilder()
+                        .setTitle('Study Session Completed')
+                        .setDescription(`You've studied for ${session.duration} minutes!\n\n**Points Earned:**\n${membersList}`)
+                        .setColor(0x2ECC71); // Green for success
+
+                    // Send the embed to the text channel
+                    await textChannel.send({ embeds: [embedDone] });
+
+                    // Clean up the session after sending the message
+                    sessions.delete(sessionCode);
                 }
             }, duration * 60 * 1000); // Convert minutes to milliseconds
+
         }
         catch (err) {
             console.error("Error at Start: " + err);
             const embed = new EmbedBuilder()
-                .setTitle('Session Start Error ⚠️')
-                .setDescription(`There was an error starting your session. Try again in 5 mins for a break `)
+                .setTitle('⚠️ Session Start Error ⚠️')
+                .setDescription(`There was an error starting your session. Try again in 5 mins for a break`)
                 .setColor(0x2ECC71) // Green for success
                 .addFields([
                     { name: 'Voice Channel', value: voiceChannel.name, inline: true },
@@ -242,7 +393,26 @@ client.on('interactionCreate', async interaction => {
     
             await interaction.editReply({ embeds: [embed] });
         }
-    } else if (commandName === 'status') {
+    }
+    
+    // //
+
+    else if (commandName === 'status') {
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setColor(0xE74C3C) // Red for error
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
         const sessionCode = interaction.options.getString('code').toUpperCase();
 
         if (!sessions.has(sessionCode)) {
@@ -284,8 +454,27 @@ client.on('interactionCreate', async interaction => {
             ]);
         await interaction.reply({ embeds: [embed], ephemeral: true });
 
-    } else if (commandName === 'stop') {
+    }
+
+    // //
+
+    else if (commandName === 'stop') {
         await interaction.deferReply();
+
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setColor(0xE74C3C) // Red for error
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
     
         const user = interaction.user;
         const sessionCodeInput = interaction.options.getString('code').toUpperCase();
@@ -329,28 +518,227 @@ client.on('interactionCreate', async interaction => {
         await awardPointsToVCMembers(voiceChannel, timeStudied);
     
         sessions.delete(sessionCodeInput); // Remove the session
-    } else if (commandName === 'leaderboard') {
+    } 
+    
+    // //
+
+    else if (commandName === 'leaderboard') {
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setColor(0xE74C3C) // Red for error
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
         const leaderboard = await getLeaderboard(interaction.guild.id);
         const embed = new EmbedBuilder()
             .setTitle('Study Leaderboard')
             .setDescription(leaderboard.join('\n'))
             .setColor(0x9B59B6); // Purple for leaderboard
         interaction.reply({ embeds: [embed] });
-    } else if (commandName === 'settextchannel') {
-        const channel = options.getChannel('channel');
+    }
+    
+    // //
 
-        // Find or create the server record in the database
-        let server = await Server.findOne({ where: { serverId: guildId } });
-        if (!server) {
-            server = await Server.create({ serverId: guildId });
+    else if (commandName === 'stats') {
+        await interaction.deferReply();
+
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setColor(0xE74C3C) // Red for error
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
         }
 
-        // Update the text channel ID in the database
-        server.textChannelId = channel.id;
-        await server.save();
+        // Fetch the user whose stats to show
+        const user = interaction.options.getUser('user') || interaction.user;
 
-        await interaction.reply(`Text channel has been set to ${channel}.`);
-    } else if (commandName === 'setloggingchannel') {
+        // Fetch user stats from the database
+        const userData = await User.findOne({ where: { userId: user.id, serverId: interaction.guild.id } });
+        if (!userData) {
+            const embed = new EmbedBuilder()
+                .setTitle('No Stats Found')
+                .setDescription(`No study stats found for ${user.tag}.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed] });
+            return;
+        }
+
+        // Fetch leaderboard to get the user's rank
+        const leaderboard = await getLeaderboard(interaction.guild.id);
+        const rank = leaderboard.findIndex(u => u.userId === user.id) + 1; // Find the user's rank in the leaderboard
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${user.username}'s Study Stats`)
+            .setThumbnail(user.displayAvatarURL()) // Display their avatar
+            .addFields([
+                { name: 'Study Streak', value: `${userData.studyStreak} days`, inline: true },
+                { name: 'Total Study Time', value: `${userData.totalStudyTime} minutes`, inline: true },
+                { name: 'Total Points', value: `${userData.points}`, inline: true },
+                { name: 'Rank', value: rank ? `#${rank}` : 'Unranked', inline: true },
+            ])
+            .setColor(0x3498DB); // Blue for info
+
+        await interaction.editReply({ embeds: [embed] });
+    }
+
+    // //
+
+    else if (commandName === 'pause') {
+        await interaction.deferReply();
+
+        const sessionCode = interaction.options.getString('code').toUpperCase();
+
+        // Fetch session from the database
+        const session = await Session.findOne({ where: { sessionCode, active: true } });
+
+        if (!session) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Not Found')
+                .setDescription(`No active study session found with the code: ${sessionCode}.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        if (session.paused) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Already Paused')
+                .setDescription(`The session with code ${sessionCode} is already paused.`)
+                .setColor(0xF1C40F); // Yellow for warning
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        // Calculate remaining time
+        const elapsedMinutes = Math.floor((Date.now() - session.startTime) / 1000 / 60);
+        const remainingTime = session.duration - elapsedMinutes;
+
+        if (remainingTime <= 0) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Completed')
+                .setDescription('This session has already ended.')
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        // Update session in the database
+        session.remainingTime = remainingTime; // Save remaining time
+        session.paused = true; // Mark as paused
+        await session.save();
+
+        const embed = new EmbedBuilder()
+            .setTitle('Session Paused')
+            .setDescription(`The session with code ${sessionCode} has been paused with ${remainingTime} minutes remaining.`)
+            .setColor(0xF1C40F); // Yellow for paused session
+        await interaction.editReply({ embeds: [embed] });
+    }
+
+    // //
+
+    else if (commandName === 'resume') {
+        await interaction.deferReply();
+
+        const sessionCode = interaction.options.getString('code').toUpperCase();
+
+        // Fetch session from the database
+        const session = await Session.findOne({ where: { sessionCode, active: true } });
+
+        if (!session) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Not Found')
+                .setDescription(`No paused study session found with the code: ${sessionCode}.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        if (!session.paused) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Not Paused')
+                .setDescription(`The session with code ${sessionCode} is not paused.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        // Resume the session: restore the start time to account for the paused duration
+        const pausedDuration = Math.floor((Date.now() - session.pauseTime) / 1000 / 60); // minutes
+        session.startTime = new Date(Date.now() - pausedDuration * 60 * 1000); // Adjust start time
+        session.paused = false;
+        await session.save();
+
+        const embed = new EmbedBuilder()
+            .setTitle('Session Resumed')
+            .setDescription(`The session with code ${sessionCode} has been resumed.`)
+            .setColor(0x2ECC71); // Green for success
+        await interaction.editReply({ embeds: [embed] });
+    }
+
+    // //
+
+    else if (commandName === 'extend') {
+        await interaction.deferReply();
+
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setColor(0xE74C3C) // Red for error
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        const sessionCode = interaction.options.getString('code').toUpperCase();
+        const additionalTime = interaction.options.getInteger('time');
+
+        // Check if the session exists and is active
+        if (!sessions.has(sessionCode)) {
+            const embed = new EmbedBuilder()
+                .setTitle('Session Not Found')
+                .setDescription(`No active study session found with the code: ${sessionCode}.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
+            return;
+        }
+
+        // Extend the session
+        const session = sessions.get(sessionCode);
+        session.duration += additionalTime; // Add extra time to the session
+
+        const embed = new EmbedBuilder()
+            .setTitle('Session Extended')
+            .setDescription(`The session with code ${sessionCode} has been extended by ${additionalTime} minutes.`)
+            .setColor(0x2ECC71); // Green for success
+        await interaction.editReply({ embeds: [embed] });
+    }
+    
+    // //
+    
+    else if (commandName === 'setloggingchannel') {
         const channel = options.getChannel('channel');
 
         // Find or create the server record in the database

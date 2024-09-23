@@ -73,6 +73,14 @@ async function endUserSession(userId, channelId, leaveTime, guildId) {
     return sessionDuration;
 }
 
+async function getUserData(serverId, userId) {
+    const userData = await User.findOne({
+        where: { serverId, userId }
+    })
+
+    return userData;
+}
+
 // //
 
 // Fetch the leaderboard (top 10 users)
@@ -111,19 +119,7 @@ async function awardPointsToVCMembers(voiceChannel, actualStudyTime) {
     const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
 
     for (const [memberId, member] of members) {
-        const points = actualStudyTime; // Assuming 1 point per minute of study
         await updateUserStats(memberId, voiceChannel.guild.id, actualStudyTime); // Update points for each user
-
-        // Notify users via DM
-        try {
-            const dm = new EmbedBuilder()
-                .setTitle('Study Points Earned')
-                .setDescription(`You earned ${points} points for studying ${actualStudyTime} minutes!`)
-                .setColor(0x3498DB); // Blue for info
-            await member.send({ embeds: [dm] });
-        } catch (error) {
-            console.error(`Could not DM user ${memberId}`, error);
-        }
     }
 }
 
@@ -149,6 +145,7 @@ module.exports = {
     updateUserStats,
     addUserSession,
     endUserSession,
+    getUserData,
 
     // * Leaderboard Data:
     getLeaderboard,
