@@ -89,16 +89,6 @@ const commands = [
             .setRequired(true)
             .addChannelTypes(ChannelType.GuildText)
     ),
-
-    new SlashCommandBuilder()
-    .setName('setvcchannel')
-    .setDescription('Set the dedicated voice channel for study sessions.')
-    .addChannelOption(option =>
-        option.setName('channel')
-            .setDescription('Select the voice channel for study sessions')
-            .setRequired(true)
-            .addChannelTypes(ChannelType.GuildVoice)
-    ),
 ];
 
 client.on('guildCreate', async guild => {
@@ -255,7 +245,7 @@ client.on('interactionCreate', async interaction => {
                             name: 'Study Session Channel',
                             value: `<#${server.textChannelId}>`
                         })
-                    await interaction.editReply({ embeds: [embed], ephemeral: true });
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
                     return;
                 }
         
@@ -264,22 +254,22 @@ client.on('interactionCreate', async interaction => {
                         .setTitle('Error')
                         .setDescription('You need to be in a voice channel to start a study session.')
                         .setColor(0xE74C3C); // Red for error
-                    await interaction.editReply({ embeds: [embed] });
+                    await interaction.reply({ embeds: [embed] });
                     return;
                 }
     
                  // Check if the voice channel already has an active session
-                 const activeSession = Array.from(sessions.values()).find(session => session.voiceChannelId === voiceChannel.id);
-    
-                 if (activeSession) {
-                     // If a session is already active in this voice channel, prevent starting a new one
-                     const embed = new EmbedBuilder()
-                         .setTitle('Active Session Already Running')
-                         .setDescription('There is already an active study session in this voice channel. You cannot start a new session until the current one ends.')
-                         .setColor(0xE74C3C); // Red for error
-                     await interaction.editReply({ embeds: [embed], ephemeral: true });
-                     return;
-                 }
+                const activeSession = Array.from(sessions.values()).find(session => session.voiceChannelId === voiceChannel.id);
+
+                if (activeSession) {
+                    // If a session is already active in this voice channel, prevent starting a new one
+                    const embed = new EmbedBuilder()
+                        .setTitle('Active Session Already Running')
+                        .setDescription('There is already an active study session in this voice channel. You cannot start a new session until the current one ends.')
+                        .setColor(0xE74C3C); // Red for error
+                    await interaction.reply({ embeds: [embed], ephemeral: true });
+                    return;
+                }
         
                 // Generate a unique code for this session
                 const sessionCode = generateSessionCode();
@@ -308,7 +298,7 @@ client.on('interactionCreate', async interaction => {
                         { name: 'Session Code', value: sessionCode, inline: true }
                     ]);
         
-                await interaction.editReply({ embeds: [embed] });
+                await interaction.reply({ embeds: [embed] });
         
                 // Set a timeout to end the session after the specified duration
                 setTimeout(async () => {
@@ -358,7 +348,7 @@ client.on('interactionCreate', async interaction => {
         catch (err) {
             console.error("Error at Start: " + err);
             const embed = new EmbedBuilder()
-                .setTitle('Session Start Error ⚠️')
+                .setTitle('⚠️ Session Start Error ⚠️')
                 .setDescription(`There was an error starting your session. Try again in 5 mins for a break `)
                 .setColor(0x2ECC71) // Green for success
                 .addFields([
@@ -491,6 +481,7 @@ client.on('interactionCreate', async interaction => {
         await interaction.editReply({ embeds: [embedStop] });
     
         // Award points based on actual time spent
+        console.log("On Stop Command: Award Points To VC Members: " + timeStudied + " minutes");
         await awardPointsToVCMembers(voiceChannel, timeStudied);
     
         sessions.delete(sessionCodeInput); // Remove the session
@@ -585,6 +576,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 
         // Calculate points based on session duration (1 point per minute)
         const points = Math.floor(duration / 60000); // Convert milliseconds to minutes
+        console.log("voiceStateUpdate Award Points To User");
         await awardPointsToUser(oldState.member.id, oldState.guild.id, points);
     }
 
@@ -617,6 +609,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             .setColor(0xE74C3C); // Red for stop
         await textChannel.send({ embeds: [embedStop] });
         
+        console.log("When members in VC = 0: Award Points to VC Members");
         await awardPointsToVCMembers(voiceChannel, session.duration);
     } else {
         // Send the prompt in the text channel and move reaction handling elsewhere
@@ -643,6 +636,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 } else if (reaction.emoji.name === '❌') {
                     await voiceChannel.setName(session.voiceChannelName).catch(console.error);
                     sessions.delete(session.sessionCode);
+                    console.log("Collectior on Collect Host Left: Award Points to VC Members");
                     await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
                     const embedStop = new EmbedBuilder()
                         .setTitle('Session Ended')
@@ -657,6 +651,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 if (!collector.collected.size) {
                     await voiceChannel.setName(session.voiceChannelName).catch(console.error);
                     sessions.delete(session.sessionCode);
+                    console.log("Collectior on End: Award Points to VC Members");
                     await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
                     const embedStop = new EmbedBuilder()
                         .setTitle('Session Ended')

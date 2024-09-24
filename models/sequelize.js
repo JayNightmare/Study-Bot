@@ -25,7 +25,7 @@ const User = sequelize.define('User', {
         type: DataTypes.INTEGER,
         defaultValue: 0
     }
-});
+}); 
  
 // Define the Server model
 const Server = sequelize.define('Server', {
