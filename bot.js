@@ -179,7 +179,7 @@ client.on('interactionCreate', async interaction => {
                 voiceChannelName: voiceChannel.name,
                 guildId: interaction.guild.id,
                 pointsPerMinute: 1
-            });
+            }); 
     
             // Optionally, update the voice channel name
             await voiceChannel.setName(`${duration} [${sessionCode}]`).catch(console.error);
