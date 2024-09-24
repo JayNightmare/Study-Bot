@@ -15,7 +15,11 @@ const { // * User Data:
 
         // * Points Data:
         awardPointsToVCMembers,
-        awardPointsToUser } = require('./commands/utils.js');
+        awardPointsToUser,
+    
+        // * Session Data:
+        handleSessionReactions
+        } = require('./commands/utils.js');
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates]
@@ -149,8 +153,60 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options, guildId } = interaction;
 
-    if (commandName === 'start') {
+    if (commandName === 'stats') {
+        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+
+        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+            const embed = new EmbedBuilder()
+                .setTitle('Invalid Channel')
+                .setDescription('This command can only be used in the designated study session channel.')
+                .addFields({
+                    name: 'Study Session Channel',
+                    value: `<#${server.textChannelId}>`
+                })
+                .setColor(0xE74C3C); // Red for error
+            await interaction.reply({ embeds: [embed] });
+            return;
+        }
+
+        // Fetch the user whose stats to show
+        const user = interaction.options.getUser('user') || interaction.user;
+
+        // Fetch user stats from the database
+        const userData = await User.findOne({ where: { userId: user.id, serverId: interaction.guild.id } });
+        if (!userData) {
+            const embed = new EmbedBuilder()
+                .setTitle('No Stats Found')
+                .setDescription(`No study stats found for ${user.tag}.`)
+                .setColor(0xE74C3C); // Red for error
+            await interaction.reply({ embeds: [embed] });
+            return;
+        }
+
+        // Fetch leaderboard to get the user's rank
+        const leaderboard = await getLeaderboard(interaction.guild.id);
+        const rank = leaderboard.findIndex(u => u.userId === user.id) + 1; // Find the user's rank in the leaderboard
+
+        const embed = new EmbedBuilder()
+            .setTitle(`${user.username}'s Study Stats`)
+            .setThumbnail(user.displayAvatarURL()) // Display their avatar
+            .addFields([
+                { name: '⌛ Study Time ⌛ |', value: `\`${userData.totalStudyTime}\` minutes`, inline: true },
+                { name: '🏅 Total Points 🏅', value: `\`${userData.points}\``, inline: true },
+                { name: '\u200B', value: '\u200B', inline: true },
+                { name: '🔥 Study Streak 🔥', value: `\`${userData.studyStreak}\` days`, inline: true },
+                { name: '🏆 Rank 🏆', value: rank ? `#${rank}` : 'Unranked', inline: true },
+            ])
+            .setColor(0x3498DB); // Blue for info
+
+        await interaction.reply({ embeds: [embed] });
+    }
+
+    // //
+
+    else if (commandName === 'start') {
         try {
+            console.log('Start Command Run');
             await interaction.deferReply();
     
             const duration = interaction.options.getInteger('duration');
@@ -416,7 +472,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         
         await awardPointsToVCMembers(voiceChannel, session.duration);
     } else {
-        // Prompt remaining members to continue or end the session
+        // Send the prompt in the text channel and move reaction handling elsewhere
         const embedPrompt = new EmbedBuilder()
             .setTitle('Host Left')
             .setDescription(`The host has left. React with ✅ to continue or ❌ to end the session. The session will end in 1 minute if no one responds.`)
@@ -440,7 +496,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 } else if (reaction.emoji.name === '❌') {
                     await voiceChannel.setName(session.voiceChannelName).catch(console.error);
                     sessions.delete(session.sessionCode);
-                    await awardPointsToVCMembers(voiceChannel, session.duration);
+                    await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
                     const embedStop = new EmbedBuilder()
                         .setTitle('Session Ended')
                         .setDescription('The session has ended.')
@@ -454,7 +510,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
                 if (!collector.collected.size) {
                     await voiceChannel.setName(session.voiceChannelName).catch(console.error);
                     sessions.delete(session.sessionCode);
-                    await awardPointsToVCMembers(voiceChannel, session.duration);
+                    await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
                     const embedStop = new EmbedBuilder()
                         .setTitle('Session Ended')
                         .setDescription('No response was received. The session has ended.')

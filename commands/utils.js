@@ -109,22 +109,7 @@ function generateSessionCode() {
 // Award points to all members in the voice channel
 async function awardPointsToVCMembers(voiceChannel, actualStudyTime) {
     const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
-
-    for (const [memberId, member] of members) {
-        const points = actualStudyTime; // Assuming 1 point per minute of study
-        await updateUserStats(memberId, voiceChannel.guild.id, actualStudyTime); // Update points for each user
-
-        // Notify users via DM
-        try {
-            const dm = new EmbedBuilder()
-                .setTitle('Study Points Earned')
-                .setDescription(`You earned ${points} points for studying ${actualStudyTime} minutes!`)
-                .setColor(0x3498DB); // Blue for info
-            await member.send({ embeds: [dm] });
-        } catch (error) {
-            console.error(`Could not DM user ${memberId}`, error);
-        }
-    }
+    for (const memberId of members) { await updateUserStats(memberId, voiceChannel.guild.id, actualStudyTime); }
 }
 
 async function awardPointsToUser(userId, serverId, points) {
@@ -140,6 +125,53 @@ async function awardPointsToUser(userId, serverId, points) {
     console.log(`Awarded ${points} points to user ${userId}. Total points: ${user.points}`);
 }
 
+// //
+
+async function handleSessionReactions(message, session, voiceChannel, textChannel) {
+    try {
+        await message.react('✅');
+        await message.react('❌');
+
+        const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && !user.bot;
+        const collector = message.createReactionCollector({ filter, time: 60000 });
+
+        collector.on('collect', async (reaction) => {
+            if (reaction.emoji.name === '✅' || reaction.emoji.name === '\u2705') {
+                const embedContinue = new EmbedBuilder()
+                    .setTitle('Session Continued')
+                    .setDescription('The session will continue!')
+                    .setColor(0x2ECC71); // Green for success
+                await textChannel.send({ embeds: [embedContinue] });
+            } else if (reaction.emoji.name === '❌' || reaction.emoji.name === '\u274C') {
+                await voiceChannel.setName(session.voiceChannelName).catch(console.error);
+                sessions.delete(session.sessionCode);
+                await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
+                const embedStop = new EmbedBuilder()
+                    .setTitle('Session Ended')
+                    .setDescription('The session has ended.')
+                    .setColor(0xE74C3C); // Red for stop
+                await textChannel.send({ embeds: [embedStop] });
+            }
+
+            collector.stop();
+        });
+
+        collector.on('end', async () => {
+            if (!collector.collected.size) {
+                await voiceChannel.setName(session.voiceChannelName).catch(console.error);
+                sessions.delete(session.sessionCode);
+                await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
+                const embedStop = new EmbedBuilder()
+                    .setTitle('Session Ended')
+                    .setDescription('No response was received. The session has ended.')
+                    .setColor(0xE74C3C); // Red for stop
+                await textChannel.send({ embeds: [embedStop] });
+            }
+        });
+    } catch (error) {
+        console.error("Failed to handle reactions:", error);
+    }
+}
 
 
 // //
@@ -159,5 +191,8 @@ module.exports = {
 
     // * Points Data:
     awardPointsToVCMembers,
-    awardPointsToUser
+    awardPointsToUser,
+
+    // * Session Data:
+    handleSessionReactions
 }
