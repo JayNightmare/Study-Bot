@@ -51,26 +51,30 @@ async function addUserSession(userId, channelId, joinTime, guildId) {
 }
 
 async function endUserSession(userId, channelId, leaveTime, guildId) {
-    // Find the active session for the user in the given server
+    // Fetch the active session from the database based on userId, channelId, and guildId
     const session = await Session.findOne({
-        where: { userId, guildId, active: true }
+        where: {
+            userId: userId,
+            channelId: channelId,
+            guildId: guildId,
+            active: true // Only look for active sessions
+        }
     });
 
     if (!session) {
-        console.error(`No active session found for user ${userId} in guild ${guildId}`);
-        return 0;
+        console.error("No active session found for the user.");
+        return 0; // No session found
     }
 
-    // Calculate the duration the user spent in the session (in milliseconds)
-    const sessionDuration = leaveTime - new Date(session.joinTime);
+    // Calculate the session duration (in milliseconds)
+    const sessionDuration = leaveTime - session.startTime;
 
-    // Remove the session after ending it
-    await Session.destroy({
-        where: { userId, guildId, active: true }
-    });
-    console.log(`Removed session for user ${userId} in guild ${guildId}`);
+    // Mark session as inactive (ended)
+    session.active = false;
+    session.leaveTime = leaveTime;
+    await session.save();
 
-    // Return the session duration in milliseconds for point calculation
+    // Return the session duration in milliseconds
     return sessionDuration;
 }
 
@@ -84,7 +88,13 @@ async function getLeaderboard(serverId) {
         limit: 10
     });
 
-    return leaderboard.map((user, index) => `${index + 1}. <@${user.userId}> - ${user.points} points`);
+    return leaderboard.map((user, index) => ({
+        userId: user.userId,
+        points: user.points
+    }));
+
+    // Alternatively, you can also display the leaderboard as a formatted string:
+    // return leaderboard.map((user, index) => `${index + 1}. <@${user.userId}> - ${user.points} points`);
 }
 
 // //
@@ -111,17 +121,18 @@ function generateSessionCode() {
 async function awardPointsToVCMembers(voiceChannel, actualStudyTime) {
     const serverId = voiceChannel.guild.id;
     const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
-    const points = actualStudyTime; 
+    const memberIds = Array.from(members.keys()); // Extract user IDs
+    const points = actualStudyTime;
 
-    console.log(`Points: ${points}\nMembers: ${members}\nServer Id: ${serverId}`);
+    console.log(`Points: ${points}\nMembers: ${memberIds}\nServer Id: ${serverId}`);
 
     try {
-        console.error("Main Update Method");
-        for (const memberId of members) { await updateUserStats(memberId, serverId, points); }
+        console.log("Main Update Method");
+        for (const memberId of memberIds) { await updateUserStats(memberId, serverId, points); }
     }
     catch(err) {
         console.error("Backup Update Method: " + err);
-        for (const memberId of members) { await awardPointsToUser(memberId, serverId, points) }
+        for (const memberId of memberIds) { await awardPointsToUser(memberId, serverId, points) }
     }
 }
 

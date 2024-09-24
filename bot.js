@@ -30,14 +30,14 @@ const rest = new REST({ version: '10' }).setToken(process.env.TEST_TOKEN);
 // Define the commands
 const commands = [
     new SlashCommandBuilder()
-        .setName('stats')
-        .setDescription('Get your stats')
-        .addIntegerOption(option =>
-            option.setName('user')
-                .setDescription('Get stats of another user')
-                .setRequired(false)
-    )
-    ,
+    .setName('stats')
+    .setDescription('View your study stats or another user\'s stats')
+    .addUserOption(option =>
+        option.setName('user')
+            .setDescription('The user to view stats for')
+            .setRequired(false)
+    ),
+
     new SlashCommandBuilder()
         .setName('start')
         .setDescription('Start a study session with a custom duration')
@@ -165,7 +165,10 @@ client.on('interactionCreate', async interaction => {
     if (commandName === 'stats') {
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
-        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+        // defer reply
+        await interaction.deferReply();
+
+        if (server && server.textChannelId !== interaction.channelId) {
             const embed = new EmbedBuilder()
                 .setTitle('Invalid Channel')
                 .setDescription('This command can only be used in the designated study session channel.')
@@ -174,7 +177,7 @@ client.on('interactionCreate', async interaction => {
                     value: `<#${server.textChannelId}>`
                 })
                 .setColor(0xE74C3C); // Red for error
-            await interaction.reply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -188,7 +191,7 @@ client.on('interactionCreate', async interaction => {
                 .setTitle('No Stats Found')
                 .setDescription(`No study stats found for ${user.tag}.`)
                 .setColor(0xE74C3C); // Red for error
-            await interaction.reply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed] });
             return;
         }
 
@@ -208,7 +211,7 @@ client.on('interactionCreate', async interaction => {
             ])
             .setColor(0x3498DB); // Blue for info
 
-        await interaction.reply({ embeds: [embed] });
+        await interaction.editReply({ embeds: [embed] });
     }
 
     // //
@@ -228,13 +231,28 @@ client.on('interactionCreate', async interaction => {
 
                     await interaction.reply({ embeds: [embed], ephemeral: true });
             } else {
-                // await interaction.deferReply();
+                await interaction.deferReply();
     
                 const user = interaction.user;
                 const member = await interaction.guild.members.fetch(user.id);
                 const voiceChannel = member.voice.channel;
     
                 const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+                const displayServerChannel = server.textChannelId;
+
+                // if display server channel is null then display "/settextchannel"
+                if (!displayServerChannel) {
+                    const embed = new EmbedBuilder()
+                        .setTitle('No Text Channel Set')
+                        .setDescription('This command can only be used in the designated study session channel')
+                        .addFields({
+                            name: 'Study Session Channel',
+                            value: `run \`/settextchannel\``
+                        })
+                        .setColor(0xE74C3C); // Red for error
+                    await interaction.editReply({ embeds: [embed], ephemeral: true });
+                    return;
+                }
     
                 if (server && server.textChannelId !== interaction.channelId) {
                     const embed = new EmbedBuilder()
@@ -243,7 +261,7 @@ client.on('interactionCreate', async interaction => {
                         .setDescription('This command can only be used in the designated study session channel')
                         .addFields({
                             name: 'Study Session Channel',
-                            value: `<#${server.textChannelId}>`
+                            value: `<#${displayServerChannel}>`
                         });
                     await interaction.editReply({ embeds: [embed], ephemeral: true });
                     return;
@@ -304,41 +322,39 @@ client.on('interactionCreate', async interaction => {
                 setTimeout(async () => {
                     const session = sessions.get(sessionCode);
                     if (session) {
-                        // Rename the channel to "Study Completed"
-                        await voiceChannel.setName("Study Completed").catch(console.error);
-    
+                        // Rename the channel to "Study VC"
+                        await voiceChannel.setName("Study VC").catch(console.error);
+                        const textChannel = interaction.guild.systemChannel || interaction.channel;
+
                         // Award points to VC members
                         const points = session.pointsPerMinute * session.duration;
-                        console.log(`Awarded ${points} points to ${voiceChannel.name}`);
-                        await awardPointsToUser(voiceChannel, points);
-    
-                        // Fetch the server settings from the database
-                        const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
-    
-                        // Determine the text channel for sending the message
-                        let textChannel;
-                        if (server?.textChannelId) {
-                            // If a dedicated text channel has been set, use it
-                            textChannel = interaction.guild.channels.cache.get(server.textChannelId);
-                        } else {
-                            // If no dedicated text channel is set, use the channel where the interaction was invoked
-                            textChannel = interaction.channel;
-                        }
-    
-                        // Collect members' point data
-                        let membersList = "";
-                        voiceChannel.members.forEach(member => {
-                            membersList += `${member.displayName} - ${points} points\n`;
+                        const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
+                        
+                        await awardPointsToVCMembers(voiceChannel, points, textChannel);
+
+                        // Send completion message to text channel
+                        const embedDone = new EmbedBuilder()
+                            .setTitle('Well Done!')
+                            .setDescription(`You've studied for ${session.duration} minutes!`)
+                            .setColor(0x2ECC71); // Green for success
+                        await textChannel.send({ embeds: [embedDone] });
+
+                        // Create a list of users and the points they earned
+                        let fields = [];
+                        members.forEach(member => {
+                            fields.push({
+                                name: `${member.user.username}`,
+                                value: `${points} points`,
+                                inline: true // Display them in rows
+                            });
                         });
     
-                        // Create a single embed with all the users and their points
-                        const embedDone = new EmbedBuilder()
-                            .setTitle('Study Session Completed')
-                            .setDescription(`You've studied for ${session.duration} minutes!\n\n**Points Earned:**\n${membersList}`)
-                            .setColor(0x2ECC71); // Green for success
-    
-                        // Send the embed to the text channel
-                        await textChannel.send({ embeds: [embedDone] });
+                        const pointsEmbed = new EmbedBuilder()
+                            .setTitle('Study Points Earned!')
+                            .setDescription('Here are the points earned by each member:')
+                            .setColor(0x9B59B6) // Purple for info
+                            .addFields(fields); // Add the fields with users and points
+                        await textChannel.send({ embeds: [pointsEmbed] }).catch(console.error);
     
                         // Clean up the session after sending the message
                         sessions.delete(sessionCode);
@@ -369,7 +385,7 @@ client.on('interactionCreate', async interaction => {
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
-        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+        if (server && server.textChannelId !== interaction.channelId) {
             const embed = new EmbedBuilder()
                 .setColor(0xE74C3C) // Red for error
                 .setTitle('Invalid Channel')
@@ -405,7 +421,9 @@ client.on('interactionCreate', async interaction => {
 
         // Calculate remaining time
         const elapsedMinutes = Math.floor((Date.now() - session.startTime) / 1000 / 60);
-        const actualDuration = Math.min(session.duration, elapsedMinutes);
+
+        // Keep incase of error
+        // const actualDuration = Math.min(session.duration, elapsedMinutes);
         // await awardPointsToVCMembers(voiceChannel, actualDuration);
 
         const remainingTime = Math.max(0, session.duration - elapsedMinutes);
@@ -430,7 +448,7 @@ client.on('interactionCreate', async interaction => {
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
-        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+        if (server && server.textChannelId !== interaction.channelId) {
             const embed = new EmbedBuilder()
                 .setColor(0xE74C3C) // Red for error
                 .setTitle('Invalid Channel')
@@ -491,11 +509,13 @@ client.on('interactionCreate', async interaction => {
     // //
     
     else if (commandName === 'leaderboard') {
+        await interaction.deferReply();
+
         const leaderboardData = await getLeaderboard(interaction.guild.id);
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
-        if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+        if (server && server.textChannelId !== interaction.channelId) {
             const embed = new EmbedBuilder()
                 .setColor(0xE74C3C) // Red for error
                 .setTitle('Invalid Channel')
@@ -511,15 +531,15 @@ client.on('interactionCreate', async interaction => {
         if (leaderboardData && leaderboardData.length > 0) {
             const embed = new EmbedBuilder()
                 .setTitle('Study Leaderboard')
-                .setDescription(displayData)
+                .setDescription(leaderboardData.join('\n'))
                 .setColor(0x9B59B6); // Purple for leaderboard
-            interaction.reply({ embeds: [embed] });
+            interaction.editReply({ embeds: [embed] });
         } else {
             const embed = new EmbedBuilder()
                 .setTitle('Leaderboard')
                 .setDescription('No data available.')
                 .setColor(0xE74C3C); // Red for error
-            interaction.reply({ embeds: [embed] });
+            interaction.editReply({ embeds: [embed] });
         }
         
     } 
@@ -562,6 +582,7 @@ client.on('interactionCreate', async interaction => {
     }
 });
 
+
 // Monitor voice state updates to detect when the host leaves
 client.on('voiceStateUpdate', async (oldState, newState) => {
     // Check if a user left the voice channel
@@ -573,12 +594,18 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     // When user leaves a voice channel
     if (oldState.channelId && !newState.channelId) {
         const leaveTime = new Date();
-        const duration = await endUserSession(oldState.member.id, oldState.channel.id, leaveTime, oldState.guild.id);
+        
+        // Calculate session-specific duration
+        const sessionDuration = await endUserSession(oldState.member.id, oldState.channel.id, leaveTime, oldState.guild.id);
 
-        // Calculate points based on session duration (1 point per minute)
-        const points = Math.floor(duration / 60000); // Convert milliseconds to minutes
-        console.log("voiceStateUpdate Award Points To User");
-        await awardPointsToUser(oldState.member.id, oldState.guild.id, points);
+        if (sessionDuration > 0) {
+            // Calculate points based on the session duration (1 point per minute)
+            const points = Math.floor(sessionDuration / 60000); // Convert milliseconds to minutes
+            console.log("Awarding points based on session duration:", points);
+
+            // Award points to the user
+            await awardPointsToUser(oldState.member.id, oldState.guild.id, points);
+        }
     }
 
     // Find if the user was a host of any session
@@ -586,10 +613,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     if (!session) return;
 
     const server = await Server.findOne({ where: { serverId: oldState.guild.id } });
-    if (!server || !server.textChannelId) {
+    if (!server?.textChannelId) {
         console.error("No dedicated text channel set for this server.");
         return;
     }
+
 
     const voiceChannel = await client.channels.fetch(session.voiceChannelId);
     const textChannel = oldState.guild.channels.cache.get(server.textChannelId);
@@ -670,6 +698,7 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
 // Handle text message responses
 client.on('messageCreate', async message => {
     if (!prompts.has(message.channel.id)) return;
+    if (!prompts) return;
 
     const { sessionCode, timeout } = prompts.get(message.channel.id);
 
