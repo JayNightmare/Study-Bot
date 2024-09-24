@@ -236,7 +236,7 @@ client.on('interactionCreate', async interaction => {
     
                 const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
     
-                if (server && server.textChannelId && server.textChannelId !== interaction.channelId) {
+                if (server && server.textChannelId !== interaction.channelId) {
                     const embed = new EmbedBuilder()
                         .setColor(0xE74C3C) // Red for error
                         .setTitle('Invalid Channel')
@@ -244,8 +244,8 @@ client.on('interactionCreate', async interaction => {
                         .addFields({
                             name: 'Study Session Channel',
                             value: `<#${server.textChannelId}>`
-                        })
-                    await interaction.reply({ embeds: [embed], ephemeral: true });
+                        });
+                    await interaction.editReply({ embeds: [embed], ephemeral: true });
                     return;
                 }
         
@@ -254,7 +254,7 @@ client.on('interactionCreate', async interaction => {
                         .setTitle('Error')
                         .setDescription('You need to be in a voice channel to start a study session.')
                         .setColor(0xE74C3C); // Red for error
-                    await interaction.reply({ embeds: [embed] });
+                    await interaction.editReply({ embeds: [embed] });
                     return;
                 }
     
@@ -267,7 +267,7 @@ client.on('interactionCreate', async interaction => {
                         .setTitle('Active Session Already Running')
                         .setDescription('There is already an active study session in this voice channel. You cannot start a new session until the current one ends.')
                         .setColor(0xE74C3C); // Red for error
-                    await interaction.reply({ embeds: [embed], ephemeral: true });
+                    await interaction.editReply({ embeds: [embed], ephemeral: true });
                     return;
                 }
         
@@ -298,7 +298,7 @@ client.on('interactionCreate', async interaction => {
                         { name: 'Session Code', value: sessionCode, inline: true }
                     ]);
         
-                await interaction.reply({ embeds: [embed] });
+                await interaction.editReply({ embeds: [embed] });
         
                 // Set a timeout to end the session after the specified duration
                 setTimeout(async () => {
@@ -309,6 +309,7 @@ client.on('interactionCreate', async interaction => {
     
                         // Award points to VC members
                         const points = session.pointsPerMinute * session.duration;
+                        console.log(`Awarded ${points} points to ${voiceChannel.name}`);
                         await awardPointsToUser(voiceChannel, points);
     
                         // Fetch the server settings from the database
@@ -316,7 +317,7 @@ client.on('interactionCreate', async interaction => {
     
                         // Determine the text channel for sending the message
                         let textChannel;
-                        if (server && server.textChannelId) {
+                        if (server?.textChannelId) {
                             // If a dedicated text channel has been set, use it
                             textChannel = interaction.guild.channels.cache.get(server.textChannelId);
                         } else {
@@ -357,7 +358,7 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Session Code', value: sessionCode, inline: true }
                 ]);
     
-            await interaction.reply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed] });
         }
     } 
     
