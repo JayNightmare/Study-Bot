@@ -30,3 +30,4 @@ Current Codes:
 | `/status code:`     | Check the status of the session      |
 | `/stop code:`       | Stops the session                    |
 | `/leaderboard`      | View the server leaderboard          |
+| `/stats user: `     | View user stats. User value is optional |
