@@ -6,6 +6,7 @@ let userSessions = new Map(); // Key: userId, Value: { channelId, joinTime }
 async function updateUserStats(userId, serverId, studyTime) {
     try {
         let user = await User.findOne({ where: { userId, serverId } });
+        console.log(userId);
         
         if (!user) {
             user = await User.create({ userId, serverId });
@@ -108,8 +109,20 @@ function generateSessionCode() {
 
 // Award points to all members in the voice channel
 async function awardPointsToVCMembers(voiceChannel, actualStudyTime) {
+    const serverId = voiceChannel.guild.id;
     const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
-    for (const memberId of members) { await updateUserStats(memberId, voiceChannel.guild.id, actualStudyTime); }
+    const points = actualStudyTime; 
+
+    console.log(`Points: ${points}\nMembers: ${members}\nServer Id: ${serverId}`);
+
+    try {
+        console.error("Main Update Method");
+        for (const memberId of members) { await updateUserStats(memberId, serverId, points); }
+    }
+    catch(err) {
+        console.error("Backup Update Method: " + err);
+        for (const memberId of members) { await awardPointsToUser(memberId, serverId, points) }
+    }
 }
 
 async function awardPointsToUser(userId, serverId, points) {
