@@ -228,7 +228,7 @@ client.on('interactionCreate', async interaction => {
 
                     await interaction.reply({ embeds: [embed], ephemeral: true });
             } else {
-                await interaction.deferReply();
+                // await interaction.deferReply();
     
                 const user = interaction.user;
                 const member = await interaction.guild.members.fetch(user.id);
@@ -357,7 +357,7 @@ client.on('interactionCreate', async interaction => {
                     { name: 'Session Code', value: sessionCode, inline: true }
                 ]);
     
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.reply({ embeds: [embed] });
         }
     } 
     
