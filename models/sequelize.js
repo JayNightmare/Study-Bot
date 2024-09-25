@@ -24,6 +24,10 @@ const User = sequelize.define('User', {
     points: {
         type: DataTypes.INTEGER,
         defaultValue: 0
+    },
+    focusEnabled: {
+        type: DataTypes.BOOLEAN, // New column to store focus status
+        defaultValue: false, // Default to false (focus mode off)
     }
 }); 
  

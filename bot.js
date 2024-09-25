@@ -1,4 +1,4 @@
-const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, InteractionType, EmbedBuilder, ChannelType } = require('discord.js');
+const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, InteractionType, EmbedBuilder, ChannelType, PermissionsBitField } = require('discord.js');
 const { Session, Server, User } = require('./models/sequelize.js');
 require('dotenv').config();
 const { // * User Data:
@@ -27,15 +27,42 @@ const client = new Client({
 
 const rest = new REST({ version: '10' }).setToken(process.env.TEST_TOKEN);
 
+
+client.rest.on('rateLimit', (info) => {
+    console.log(`Rate limit hit:
+        Timeout: ${info.timeout}ms
+        Limit: ${info.limit}
+        Method: ${info.method}
+        Path: ${info.path}
+        Global: ${info.global}`);
+});
+
+// Example function that adds a role with error and rate-limit handling
+async function assignRoleWithLimitCheck(member, role) {
+    try {
+        await member.roles.add(role);
+        console.log(`Added role to ${member.user.tag}`);
+    } catch (error) {
+        if (error.httpStatus === 429) {
+            // Handle the rate limit
+            const retryAfter = error.retry_after || 1000; // Retry after time in ms
+            console.log(`Rate limit hit! Retrying after ${retryAfter}ms`);
+            setTimeout(() => assignRoleWithLimitCheck(member, role), retryAfter);
+        } else {
+            console.error(`Failed to assign role: ${error.message}`);
+        }
+    }
+}
+
 // Define the commands
 const commands = [
     new SlashCommandBuilder()
-    .setName('stats')
-    .setDescription('View your study stats or another user\'s stats')
-    .addUserOption(option =>
-        option.setName('user')
-            .setDescription('The user to view stats for')
-            .setRequired(false)
+        .setName('stats')
+        .setDescription('View your study stats or another user\'s stats')
+        .addUserOption(option =>
+            option.setName('user')
+                .setDescription('The user to view stats for')
+                .setRequired(false)
     ),
 
     new SlashCommandBuilder()
@@ -70,25 +97,42 @@ const commands = [
         .setDescription('Show the leaderboard'),
     
     new SlashCommandBuilder()
-    .setName('settextchannel')
-    .setDescription('Set the dedicated text channel for study session updates.')
-    .addChannelOption(option =>
-        option.setName('channel')
-            .setDescription('Select the channel for study session messages')
-            .setRequired(true)
-            .addChannelTypes(ChannelType.GuildText)
+        .setName('settextchannel')
+        .setDescription('Set the dedicated text channel for study session updates.')
+        .addChannelOption(option =>
+            option.setName('channel')
+                .setDescription('Select the channel for study session messages')
+                .setRequired(true)
+                .addChannelTypes(ChannelType.GuildText)
     ),
 
-    // Slash command to set the logging channel
     new SlashCommandBuilder()
-    .setName('setloggingchannel')
-    .setDescription('Set the logging channel for updates.')
-    .addChannelOption(option =>
-        option.setName('channel')
-            .setDescription('Select the logging channel for updates')
-            .setRequired(true)
-            .addChannelTypes(ChannelType.GuildText)
+        .setName('setloggingchannel')
+        .setDescription('Set the logging channel for updates.')
+        .addChannelOption(option =>
+            option.setName('channel')
+                .setDescription('Select the logging channel for updates')
+                .setRequired(true)
+                .addChannelTypes(ChannelType.GuildText)
     ),
+
+    new SlashCommandBuilder()
+        .setName('focus')
+        .setDescription('Toggle focus mode to mute/hide all channels')
+        .addBooleanOption(option =>
+            option.setName('enable')
+            .setDescription('Enable or disable focus mode')
+            .setRequired(true)
+    ),
+
+    new SlashCommandBuilder()
+        .setName('setup')
+        .setDescription('Setup study session channels and roles')
+        .addIntegerOption(option =>
+            option.setName('voice_channels')
+            .setDescription('Number of voice channels to create')
+            .setRequired(true)
+    )
 ];
 
 client.on('guildCreate', async guild => {
@@ -162,7 +206,153 @@ client.on('interactionCreate', async interaction => {
     if (!interaction.isCommand()) return;
     const { commandName, options, guildId } = interaction;
 
-    if (commandName === 'stats') {
+    if (interaction.commandName === 'focus') {
+        await interaction.deferReply();
+
+        const enableFocus = interaction.options.getBoolean('enable');
+
+        const focusRole = interaction.guild.roles.cache.find(role => role.name === 'Focus');
+        if (!focusRole) return interaction.editReply('Focus role not found.');
+
+        if (enableFocus) {
+            await interaction.member.roles.add(focusRole);
+            await interaction.editReply({ content: 'Focus mode enabled. You will now have limited access for better concentration.', ephemeral: true });
+        } else {
+            await interaction.member.roles.remove(focusRole);
+            await interaction.editReply({ content: 'Focus mode disabled. You now have access to all channels again.', ephemeral: true });
+        }
+
+        // Fetch the user from the database
+        let user = await User.findOne({ where: { userId: interaction.user.id, serverId: interaction.guild.id } });
+
+        if (!user) {
+            // Create the user in the database if they don't exist
+            user = await User.create({
+                userId: interaction.user.id,
+                serverId: interaction.guild.id,
+                focusEnabled: enableFocus
+            });
+        } else {
+            // Update the user's focus mode
+            user.focusEnabled = enableFocus;
+            await user.save();
+        }
+
+        // Respond to the user
+        if (enableFocus) {
+            await interaction.editReply({ content: 'Focus mode enabled. You will now have limited access for better concentration.', ephemeral: true });
+        } else {
+            await interaction.editReply({ content: 'Focus mode disabled. You now have access to all channels again.', ephemeral: true });
+        }
+    }
+
+    // //
+
+    else if (interaction.commandName === 'setup') {
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return interaction.reply({ content: 'You need to be an admin to run this command.', ephemeral: true });
+        }
+
+        const numVoiceChannels = interaction.options.getInteger('voice_channels');
+
+        // Check if the server is already setup
+        let server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+        if (server && server.textChannelId) {
+            return interaction.reply({ content: 'This server is already set up.', ephemeral: true });
+        }
+
+        try {
+            // Defer the reply to allow time for the setup to complete
+            await interaction.deferReply({ ephemeral: true });
+
+            // Step 1: Create a category
+            const category = await interaction.guild.channels.create({
+                name: 'Study Focus',
+                type: 4, // Category type
+                permissionOverwrites: [
+                    {
+                        id: interaction.guild.id, // Default permissions for everyone
+                        deny: [PermissionsBitField.Flags.ViewChannel], // Deny viewing for everyone by default
+                    }
+                ]
+            });
+
+            // Step 2: Create a text channel in the category
+            const textChannel = await interaction.guild.channels.create({
+                name: 'study-text',
+                type: 0, // Text channel type
+                parent: category.id, // Place it under the category
+                permissionOverwrites: [
+                    {
+                        id: interaction.guild.id, // Default permissions for everyone
+                        deny: [PermissionsBitField.Flags.ViewChannel], // Hide it for everyone except focus role
+                    }
+                ]
+            });
+
+            // Step 3: Create voice channels in the category
+            for (let i = 1; i <= numVoiceChannels; i++) {
+                await interaction.guild.channels.create({
+                    name: `Study VC ${i}`,
+                    type: 2, // Voice channel type
+                    parent: category.id, // Place it under the category
+                    permissionOverwrites: [
+                        {
+                            id: interaction.guild.id, // Default permissions for everyone
+                            deny: [PermissionsBitField.Flags.ViewChannel], // Hide it for everyone except focus role
+                        }
+                    ]
+                });
+            }
+
+            // Step 4: Create the Focus role
+            let focusRole = interaction.guild.roles.cache.find(role => role.name === 'Focus');
+            if (!focusRole) {
+                focusRole = await interaction.guild.roles.create({
+                    name: 'Focus',
+                    color: 0xe71563, // Use your custom hex color code
+                    reason: 'Role for focused study sessions',
+                });
+            }
+
+            // Step 5: Update permissions for all other channels to deny view for Focus role
+            interaction.guild.channels.cache.forEach(channel => {
+                if (channel.parentId !== category.id) { // Don't modify the new category
+                    channel.permissionOverwrites.edit(focusRole, {
+                        ViewChannel: false, // Hide other channels from focus role
+                    });
+                } else {
+                    channel.permissionOverwrites.edit(focusRole, {
+                        ViewChannel: true, // Allow view of new study channels
+                    });
+                }
+            });
+
+            // Step 6: Save the text channel ID to the database
+            if (!server) {
+                server = await Server.create({
+                    serverId: interaction.guild.id,
+                    textChannelId: textChannel.id, // Store the text channel ID
+                    customStudyDuration: 25, // Default settings
+                    customBreakDuration: 5
+                });
+            } else {
+                server.textChannelId = textChannel.id;
+                await server.save();
+            }
+
+            // Finalize the setup process and reply to the user
+            await interaction.editReply({ content: 'Study setup complete!' });
+
+        } catch (error) {
+            console.error('Setup failed:', error);
+            await interaction.editReply({ content: 'An error occurred during setup.' });
+        }
+    }
+
+    // //
+
+    else if (commandName === 'stats') {
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
         // defer reply
@@ -177,7 +367,7 @@ client.on('interactionCreate', async interaction => {
                     value: `<#${server.textChannelId}>`
                 })
                 .setColor(0xE74C3C); // Red for error
-            await interaction.editReply({ embeds: [embed] });
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
             return;
         }
 
@@ -394,8 +584,7 @@ client.on('interactionCreate', async interaction => {
                     name: 'Study Session Channel',
                     value: `<#${server.textChannelId}>`
                 })
-            await interaction.editReply({ embeds: [embed], ephemeral: true });
-            return;
+            return await interaction.editReply({ embeds: [embed], ephemeral: true });
         }
 
         if (!sessions.has(sessionCode)) {
@@ -448,7 +637,7 @@ client.on('interactionCreate', async interaction => {
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
-        if (server && server.textChannelId !== interaction.channelId) {
+        if (server?.textChannelId !== interaction.channelId) {
             const embed = new EmbedBuilder()
                 .setColor(0xE74C3C) // Red for error
                 .setTitle('Invalid Channel')
@@ -457,8 +646,8 @@ client.on('interactionCreate', async interaction => {
                     name: 'Study Session Channel',
                     value: `<#${server.textChannelId}>`
                 })
-            await interaction.editReply({ embeds: [embed], ephemeral: true });
-            return;
+
+            return await interaction.editReply({ embeds: [embed], ephemeral: true });
         }
     
         const user = interaction.user;
@@ -589,6 +778,23 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     if (!oldState.channelId && newState.channelId) {
         const joinTime = new Date();
         await addUserSession(newState.member.id, newState.channel.id, joinTime, newState.guild.id);
+
+        const voiceChannel = newState.channel;
+        const session = sessions.get(voiceChannel.id); // Get session by voice channel ID
+
+        if (session) {
+            // Fetch user focus setting from the database
+            const user = await User.findOne({ where: { userId: newState.member.id, serverId: newState.guild.id } });
+
+            if (user?.focusEnabled) {
+                const focusRole = newState.guild.roles.cache.find(role => role.name === 'Focus');
+                if (!focusRole) return console.log('Focus role not found.');
+
+                // Add focus role to the user
+                await newState.member.roles.add(focusRole).catch(console.error);
+                console.log(`Assigned Focus role to ${newState.member.user.username}`);
+            }
+        }
     }
 
     // When user leaves a voice channel
@@ -606,6 +812,13 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
             // Award points to the user
             await awardPointsToUser(oldState.member.id, oldState.guild.id, points);
         }
+
+        const focusRole = oldState.guild.roles.cache.find(role => role.name === 'Focus');
+        if (!focusRole) return console.log('Focus role not found.');
+
+        // Remove focus role when user leaves
+        await oldState.member.roles.remove(focusRole).catch(console.error);
+        console.log(`Removed Focus role from ${oldState.member.user.username}`);
     }
 
     // Find if the user was a host of any session
