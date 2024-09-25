@@ -51,30 +51,26 @@ async function addUserSession(userId, channelId, joinTime, guildId) {
 }
 
 async function endUserSession(userId, channelId, leaveTime, guildId) {
-    // Fetch the active session from the database based on userId, channelId, and guildId
+    // Find the active session for the user in the given server
     const session = await Session.findOne({
-        where: {
-            userId: userId,
-            channelId: channelId,
-            guildId: guildId,
-            active: true // Only look for active sessions
-        }
+        where: { userId, guildId, active: true }
     });
 
     if (!session) {
-        console.error("No active session found for the user.");
-        return 0; // No session found
+        console.error(`No active session found for user ${userId} in guild ${guildId}`);
+        return 0;
     }
 
-    // Calculate the session duration (in milliseconds)
-    const sessionDuration = leaveTime - session.startTime;
+    // Calculate the duration the user spent in the session (in milliseconds)
+    const sessionDuration = leaveTime - new Date(session.joinTime);
 
-    // Mark session as inactive (ended)
-    session.active = false;
-    session.leaveTime = leaveTime;
-    await session.save();
+    // Remove the session after ending it
+    await Session.destroy({
+        where: { userId, guildId, active: true }
+    });
+    console.log(`Removed session for user ${userId} in guild ${guildId}`);
 
-    // Return the session duration in milliseconds
+    // Return the session duration in milliseconds for point calculation
     return sessionDuration;
 }
 
@@ -140,7 +136,7 @@ async function awardPointsToUser(userId, serverId, points) {
     let user = await User.findOne({ where: { userId, serverId } });
     
     if (!user) {
-        // If user doesn't exist, create a new record
+        // If user doesn't exist, create a new 
         user = await User.create({ userId, serverId });
     }
 
@@ -197,7 +193,6 @@ async function handleSessionReactions(message, session, voiceChannel, textChanne
     }
 }
 
-
 // //
 
 module.exports = {
@@ -218,5 +213,5 @@ module.exports = {
     awardPointsToUser,
 
     // * Session Data:
-    handleSessionReactions
+    handleSessionReactions,
 }

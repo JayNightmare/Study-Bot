@@ -18,8 +18,12 @@ const { // * User Data:
         awardPointsToUser,
     
         // * Session Data:
-        handleSessionReactions
+        handleSessionReactions,
+
         } = require('./commands/utils.js');
+
+const { logEvent, processLogs } = require('./commands/logEvents');
+
 
 const client = new Client({
     intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates]
@@ -35,6 +39,8 @@ client.rest.on('rateLimit', (info) => {
         Method: ${info.method}
         Path: ${info.path}
         Global: ${info.global}`);
+
+    logEvent(serverId, 'Bot is rate limited', 'low');
 });
 
 // Example function that adds a role with error and rate-limit handling
@@ -117,6 +123,20 @@ const commands = [
     ),
 
     new SlashCommandBuilder()
+        .setName('setloglevel')
+        .setDescription('Set the logging level for the bot.')
+        .addStringOption(option =>
+            option.setName('level')
+            .setDescription('The logging level to set (low, medium, high)')
+            .setRequired(true)
+            .addChoices(
+                { name: 'Low', value: 'low' },
+                { name: 'Medium', value: 'medium' },
+                { name: 'High', value: 'high' }
+            )
+    ),
+
+    new SlashCommandBuilder()
         .setName('focus')
         .setDescription('Toggle focus mode to mute/hide all channels')
         .addBooleanOption(option =>
@@ -154,59 +174,63 @@ client.on('guildCreate', async guild => {
 client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
 
-    // Fetch all guilds (servers) the bot is in
-    const guilds = await client.guilds.fetch();
-
-    // Loop over each guild and ensure it's in the database
-    for (const [guildId, guild] of guilds) {
-        try {
-            // Check if the server exists in the database
-            let server = await Server.findOne({ where: { serverId: guildId } });
-            
-            if (!server) {
-                // If not, create a new entry for the server
-                server = await Server.create({
-                    serverId: guildId
-                });
-                console.log(`Added server ${guild.name} (${guildId}) to the database.`);
-            } else {
-                console.log(`Server ${guild.name} (${guildId}) already exists in the database.`);
-            }
-        } catch (error) {
-            console.error(`Error adding server ${guild.name} (${guildId}) to the database:`, error);
-        }
-    }
-
     try {
+        // Fetch all guilds (servers) the bot is in
         const guilds = await client.guilds.fetch();
+
+        // Log an event for each server the bot is in
         guilds.forEach(async (guild) => {
+            const serverId = guild.id;
+            logEvent(serverId, 'Bot has started up', 'low');
+
             try {
+                // Check if the server exists in the database
+                let server = await Server.findOne({ where: { serverId } });
+                
+                if (!server) {
+                    // If not, create a new entry for the server
+                    server = await Server.create({ serverId });
+                    console.log(`Added server ${guild.name} (${serverId}) to the database.`);
+                } else {
+                    console.log(`Server ${guild.name} (${serverId}) already exists in the database.`);
+                }
+
+                // Register commands for the guild
                 await rest.put(
-                    Routes.applicationGuildCommands(client.user.id, guild.id),
+                    Routes.applicationGuildCommands(client.user.id, serverId),
                     { body: commands }
                 );
+
             } catch (error) {
-                console.error(`Error registering commands for guild: ${guild.id}`, error);
+                console.error(`Error registering commands or adding server ${guild.name} (${serverId}) to the database:`, error);
             }
         });
-        console.log('Successfully registered application (/) commands.');
-    } catch (error) {
-        console.error(error);
-    }
 
-    console.log('All servers initialized in the database.');
+        console.log('All servers initialized in the database.');
+        console.log('Successfully registered application (/) commands.');
+
+    } catch (error) {
+        console.error('Error fetching guilds:', error);
+    }
 });
 
 let sessions = new Map(); // Store active study sessions
 let prompts = new Map(); // Store ongoing prompts when the host leaves
+const sessionCodes = new Map();
+
+// function getSessionCode(vcId) {
+//     return sessionCodes.get(vcId);
+// }
 
 // Handle slash command interactions
 client.on('interactionCreate', async interaction => {
     if (interaction.type !== InteractionType.ApplicationCommand) return;
     if (!interaction.isCommand()) return;
     const { commandName, options, guildId } = interaction;
+    let serverId = interaction.guild.id;
 
     if (interaction.commandName === 'focus') {
+        logEvent(serverId, 'Focus Command Run', 'high');
         await interaction.deferReply();
 
         const enableFocus = interaction.options.getBoolean('enable');
@@ -249,6 +273,7 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (interaction.commandName === 'setup') {
+        logEvent(serverId, 'Setup Command Run', 'low');
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return interaction.reply({ content: 'You need to be an admin to run this command.', ephemeral: true });
         }
@@ -353,6 +378,7 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (commandName === 'stats') {
+        logEvent(serverId, 'Stats Command Run', 'high');
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
 
         // defer reply
@@ -407,6 +433,7 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (commandName === 'start') {
+        logEvent(serverId, 'Start Session Command Run', 'medium');
         try {
             console.log('Start Command Run');
 
@@ -480,7 +507,7 @@ client.on('interactionCreate', async interaction => {
                 }
         
                 // Generate a unique code for this session
-                const sessionCode = generateSessionCode();
+                sessionCode = generateSessionCode();
         
                 // Store the session info
                 sessions.set(sessionCode, {
@@ -571,6 +598,8 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (commandName === 'status') {
+        logEvent(serverId, 'Check Session Status Command Run', 'medium');
+
         const sessionCode = interaction.options.getString('code').toUpperCase();
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
@@ -633,6 +662,9 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (commandName === 'stop') {
+        logEvent(serverId, 'Stop Session Command Run', 'medium');
+        console.log("Stop command triggered");
+
         await interaction.deferReply();
 
         const server = await Server.findOne({ where: { serverId: interaction.guild.id } });
@@ -680,7 +712,7 @@ client.on('interactionCreate', async interaction => {
         const timeStudied = Math.min(actualTimeSpent, session.duration); // Cap at session duration
     
         const voiceChannel = await client.channels.fetch(session.voiceChannelId);
-        await voiceChannel.setName("Study Completed").catch(console.error); // Rename channel
+        voiceChannel.setName("Study Completed").catch(console.error); // Rename channel
     
         const embedStop = new EmbedBuilder()
             .setTitle('Study Session Stopped')
@@ -698,6 +730,8 @@ client.on('interactionCreate', async interaction => {
     // //
     
     else if (commandName === 'leaderboard') {
+        logEvent(serverId, 'Leaderboard Command Run', 'high');
+
         await interaction.deferReply();
 
         const leaderboardData = await getLeaderboard(interaction.guild.id);
@@ -736,6 +770,8 @@ client.on('interactionCreate', async interaction => {
     // //
 
     else if (commandName === 'settextchannel') {
+        logEvent(serverId, 'Set Text Channel Command Run', 'low');
+
         const channel = options.getChannel('channel');
 
         let server = await Server.findOne({ where: { serverId: interaction.guild.id } });
@@ -755,6 +791,8 @@ client.on('interactionCreate', async interaction => {
     // //
     
     else if (commandName === 'setloggingchannel') {
+        logEvent(serverId, 'Set Logging Channel Command Run', 'low');
+
         const channel = options.getChannel('channel');
 
         // Find or create the server record in the database
@@ -769,19 +807,43 @@ client.on('interactionCreate', async interaction => {
 
         await interaction.reply(`Logging channel has been set to ${channel}.`);
     }
-});
 
+    // //
+
+    else if (interaction.commandName === 'setloglevel') {
+        logEvent(serverId, 'Set Log Level Command Run', 'low');
+
+        const level = interaction.options.getString('level');
+
+        if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
+            return interaction.reply({ content: 'You need to be an admin to run this command.', ephemeral: true });
+        }
+
+        let server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+        if (!server) {
+            return interaction.reply({ content: 'Server not found in the database.', ephemeral: true });
+        }
+
+        server.logLevel = level;
+        await server.save();
+
+        await interaction.reply({ content: `Log level set to ${level}`, ephemeral: true });
+    }
+});
 
 // Monitor voice state updates to detect when the host leaves
 client.on('voiceStateUpdate', async (oldState, newState) => {
+    let serverId = oldState.guild.id;
+    
     // Check if a user left the voice channel
     if (!oldState.channelId && newState.channelId) {
         const joinTime = new Date();
         await addUserSession(newState.member.id, newState.channel.id, joinTime, newState.guild.id);
-
+        
         const voiceChannel = newState.channel;
         const session = sessions.get(voiceChannel.id); // Get session by voice channel ID
 
+        console.log(`!oldstate and new state: ${session}`);
         if (session) {
             // Fetch user focus setting from the database
             const user = await User.findOne({ where: { userId: newState.member.id, serverId: newState.guild.id } });
@@ -800,9 +862,11 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
     // When user leaves a voice channel
     if (oldState.channelId && !newState.channelId) {
         const leaveTime = new Date();
+        let sessionDuration;
         
         // Calculate session-specific duration
-        const sessionDuration = await endUserSession(oldState.member.id, oldState.channel.id, leaveTime, oldState.guild.id);
+        // Automatically delete session code after 5 seconds
+        setTimeout(async () => { sessionDuration = await endUserSession(oldState.member.id, oldState.channel.id, leaveTime, oldState.guild.id);}, 5000);
 
         if (sessionDuration > 0) {
             // Calculate points based on the session duration (1 point per minute)
@@ -821,91 +885,99 @@ client.on('voiceStateUpdate', async (oldState, newState) => {
         console.log(`Removed Focus role from ${oldState.member.user.username}`);
     }
 
-    // Find if the user was a host of any session
     const session = [...sessions.values()].find(s => s.userId === oldState.member.id && s.voiceChannelId === oldState.channelId);
-    if (!session) return;
+    if (!session) {
+        console.error(`No session found for user: ${oldState.member.id} in channel: ${oldState.channelId}`);
+        return; // Exit if session is not found
+    }
+
+    if (!oldState?.channel) {
+        console.error('Old state or old channel is null/undefined');
+        return;
+    }
+    
+    if (!oldState.member?.id) {
+        console.error('Old state member is null/undefined');
+        return;
+    }    
+
+    console.log(`Session Data (Voice Update): ${session}`);
+
+    console.log('Sessions:', [...sessions.entries()]);
+
+    const voiceChannel = oldState.channel;
+    if (!voiceChannel) {
+        console.error('Voice channel is null or undefined');
+        return; // Exit if voiceChannel is not found
+    }
+
+    const updatedVoiceChannel = await client.channels.fetch(voiceChannel.id);
 
     const server = await Server.findOne({ where: { serverId: oldState.guild.id } });
+    const textChannel = oldState.guild.channels.cache.get(server.textChannelId);
+
+    // Find if the user was a host of any session
+    console.log(`oldstate and !new state: ${session}`);
+    if (!session) return;
+
     if (!server?.textChannelId) {
         console.error("No dedicated text channel set for this server.");
         return;
     }
-
-
-    const voiceChannel = await client.channels.fetch(session.voiceChannelId);
-    const textChannel = oldState.guild.channels.cache.get(server.textChannelId);
 
     if (!textChannel) {
         console.error("Bot does not have permission to send messages in the configured text channel.");
         return;
     }
 
-    if (voiceChannel.members.size === 0) {
-        // No one is left in the channel, automatically end the session
-        await voiceChannel.setName(session.voiceChannelName).catch(console.error);
-        sessions.delete(session.sessionCode);
-        
-        const embedStop = new EmbedBuilder()
+    /* Keep incase of error
+        if (voiceChannel.members.size === 0) {
+            // No one is left in the channel, automatically end the session
+            await voiceChannel.setName(session.voiceChannelName).catch(console.error);
+            sessions.delete(session.sessionCode);
+            
+            const embedStop = new EmbedBuilder()
             .setTitle('Session Ended')
             .setDescription('The session has ended as no one is left in the voice channel.')
             .setColor(0xE74C3C); // Red for stop
+            await textChannel.send({ embeds: [embedStop] });
+        
+            logEvent(serverId, `Session ${session.sessionCode} ended because all members left ${voiceChannel}`, 'high')
+            console.log("When members in VC = 0: Award Points to VC Members");
+            await awardPointsToVCMembers(voiceChannel, session.duration);
+        }
+    */
+
+    // if no members in the voice channel, automatically end the session
+    if (updatedVoiceChannel.members.size === 0) {
+        console.log(`Session Code For No Members: ${sessions.sessionCode}`);
+
+        await updatedVoiceChannel.setName(session.voiceChannelName).catch(console.error);
+
+        const embedStop = new EmbedBuilder()
+            .setTitle('Session Suspended')
+            .setDescription(`Session ${sessionCode} is suspended because the no one is left in ${updatedVoiceChannel}.\nSession will continue for ${session.duration} minutes.\n\n**Join back to receive points**`) 
+            .addFields([
+                {
+                    name: 'Session Duration',
+                    value: `${session.duration} minutes`,
+                    inline: true
+                },
+                {
+                    name: 'Join Back',
+                    value: `Session VC: <#${updatedVoiceChannel.id}>`,
+                    inline: true
+                }
+            ])  
+            .setColor(0xE74C3C); // Red for stop
+            
         await textChannel.send({ embeds: [embedStop] });
         
-        console.log("When members in VC = 0: Award Points to VC Members");
-        await awardPointsToVCMembers(voiceChannel, session.duration);
-    } else {
-        // Send the prompt in the text channel and move reaction handling elsewhere
-        const embedPrompt = new EmbedBuilder()
-            .setTitle('Host Left')
-            .setDescription(`The host has left. React with ✅ to continue or ❌ to end the session. The session will end in 1 minute if no one responds.`)
-            .setColor(0xF1C40F); // Yellow for prompt
-    
-        try {
-            const message = await textChannel.send({ embeds: [embedPrompt] });
-            await message.react('✅');
-            await message.react('❌');
+        logEvent(serverId, `Session ${sessionCode} is suspended because the host left ${updatedVoiceChannel}`, 'high')
 
-            const filter = (reaction, user) => ['✅', '❌'].includes(reaction.emoji.name) && !user.bot;
-            const collector = message.createReactionCollector({ filter, time: 60000 });
-
-            collector.on('collect', async (reaction) => {
-                if (reaction.emoji.name === '✅') {
-                    const embedContinue = new EmbedBuilder()
-                        .setTitle('Session Continued')
-                        .setDescription('The session will continue!')
-                        .setColor(0x2ECC71); // Green for success
-                    await textChannel.send({ embeds: [embedContinue] });
-                } else if (reaction.emoji.name === '❌') {
-                    await voiceChannel.setName(session.voiceChannelName).catch(console.error);
-                    sessions.delete(session.sessionCode);
-                    console.log("Collectior on Collect Host Left: Award Points to VC Members");
-                    await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
-                    const embedStop = new EmbedBuilder()
-                        .setTitle('Session Ended')
-                        .setDescription('The session has ended.')
-                        .setColor(0xE74C3C); // Red for stop
-                    await textChannel.send({ embeds: [embedStop] });
-                }
-                collector.stop();
-            });
-
-            collector.on('end', async () => {
-                if (!collector.collected.size) {
-                    await voiceChannel.setName(session.voiceChannelName).catch(console.error);
-                    sessions.delete(session.sessionCode);
-                    console.log("Collectior on End: Award Points to VC Members");
-                    await awardPointsToVCMembers(voiceChannel, session.duration, textChannel);
-                    const embedStop = new EmbedBuilder()
-                        .setTitle('Session Ended')
-                        .setDescription('No response was received. The session has ended.')
-                        .setColor(0xE74C3C); // Red for stop
-                    await textChannel.send({ embeds: [embedStop] });
-                }
-            });
-        } catch (error) {
-            console.error("Failed to send message or handle reactions:", error);
-        }
-    } 
+        console.log("When host left: Award Points to VC Members");
+        await awardPointsToVCMembers(updatedVoiceChannel, session.duration);  
+    }
 });
 
 // Handle text message responses
@@ -942,5 +1014,7 @@ client.on('messageCreate', async message => {
         await awardPointsToVCMembers(voiceChannel, session.duration);
     }
 });
+
+setInterval(() => processLogs(client), 180000);
 
 client.login(process.env.TEST_TOKEN);

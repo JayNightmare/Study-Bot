@@ -53,6 +53,10 @@ const Server = sequelize.define('Server', {
     customBreakDuration: {
         type: DataTypes.INTEGER,
         defaultValue: 5 // default 5 minutes
+    },
+    logLevel: {
+        type: DataTypes.STRING, // This will store "low", "medium", or "high"
+        defaultValue: 'low' // Default to low level logging
     }
 });
 
