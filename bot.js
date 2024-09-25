@@ -257,7 +257,7 @@ client.on('interactionCreate', async interaction => {
 
         // Check if the server is already setup
         let server = await Server.findOne({ where: { serverId: interaction.guild.id } });
-        if (server && server.textChannelId) {
+        if (server?.textChannelId) {
             return interaction.reply({ content: 'This server is already set up.', ephemeral: true });
         }
 
