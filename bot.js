@@ -112,6 +112,12 @@ const commands = [
                 .addChannelTypes(ChannelType.GuildText)
     ),
 
+    // Remove set text channel
+    new SlashCommandBuilder()
+        .setName('removetextchannel')
+        .setDescription('Remove the dedicated text channel for study session updates.')
+    ,
+
     new SlashCommandBuilder()
         .setName('setloggingchannel')
         .setDescription('Set the logging channel for updates.')
@@ -216,11 +222,6 @@ client.once('ready', async () => {
 
 let sessions = new Map(); // Store active study sessions
 let prompts = new Map(); // Store ongoing prompts when the host leaves
-const sessionCodes = new Map();
-
-// function getSessionCode(vcId) {
-//     return sessionCodes.get(vcId);
-// }
 
 // Handle slash command interactions
 client.on('interactionCreate', async interaction => {
@@ -229,21 +230,20 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, guildId } = interaction;
     let serverId = interaction.guild.id;
 
-    if (interaction.commandName === 'focus') {
-        logEvent(serverId, 'Focus Command Run', 'high');
-        await interaction.deferReply();
+    if (commandName === 'focus') {
+        logEvent(serverId, 'Focus Command Run', 'medium');
 
         const enableFocus = interaction.options.getBoolean('enable');
 
         const focusRole = interaction.guild.roles.cache.find(role => role.name === 'Focus');
-        if (!focusRole) return interaction.editReply('Focus role not found.');
+        if (!focusRole) return interaction.editReply({ content: 'Focus role not found', ephemeral: true });
 
         if (enableFocus) {
             await interaction.member.roles.add(focusRole);
-            await interaction.editReply({ content: 'Focus mode enabled. You will now have limited access for better concentration.', ephemeral: true });
+            await interaction.reply({ content: 'Focus mode enabled. You will now have limited access for better concentration.', ephemeral: true });
         } else {
             await interaction.member.roles.remove(focusRole);
-            await interaction.editReply({ content: 'Focus mode disabled. You now have access to all channels again.', ephemeral: true });
+            await interaction.reply({ content: 'Focus mode disabled. You now have access to all channels again.', ephemeral: true });
         }
 
         // Fetch the user from the database
@@ -259,7 +259,7 @@ client.on('interactionCreate', async interaction => {
         } else {
             // Update the user's focus mode
             user.focusEnabled = enableFocus;
-            await user.save();
+            user.save();
         }
 
         // Respond to the user
@@ -268,11 +268,11 @@ client.on('interactionCreate', async interaction => {
         } else {
             await interaction.editReply({ content: 'Focus mode disabled. You now have access to all channels again.', ephemeral: true });
         }
-    }
+    }    
 
     // //
 
-    else if (interaction.commandName === 'setup') {
+    else if (commandName === 'setup') {
         logEvent(serverId, 'Setup Command Run', 'low');
         if (!interaction.member.permissions.has(PermissionsBitField.Flags.Administrator)) {
             return interaction.reply({ content: 'You need to be an admin to run this command.', ephemeral: true });
@@ -296,8 +296,16 @@ client.on('interactionCreate', async interaction => {
                 type: 4, // Category type
                 permissionOverwrites: [
                     {
-                        id: interaction.guild.id, // Default permissions for everyone
-                        deny: [PermissionsBitField.Flags.ViewChannel], // Deny viewing for everyone by default
+                        id: interaction.guild.id, 
+                        allow: [PermissionsBitField.Flags.ViewChannel], 
+                    },
+                    {
+                        id: interaction.guild.id,
+                        allow: [PermissionsBitField.Flags.SendMessages]
+                    },
+                    {
+                        id: interaction.guild.id,
+                        deny: [PermissionsBitField.Flags.Connect] // Prevent people joining a focus session
                     }
                 ]
             });
@@ -307,12 +315,12 @@ client.on('interactionCreate', async interaction => {
                 name: 'study-text',
                 type: 0, // Text channel type
                 parent: category.id, // Place it under the category
-                permissionOverwrites: [
-                    {
-                        id: interaction.guild.id, // Default permissions for everyone
-                        deny: [PermissionsBitField.Flags.ViewChannel], // Hide it for everyone except focus role
-                    }
-                ]
+                // permissionOverwrites: [
+                //     {
+                //         id: interaction.guild.id, // Default permissions for everyone
+                //         deny: [PermissionsBitField.Flags.ViewChannel], // Hide it for everyone except focus role
+                //     }
+                // ]
             });
 
             // Step 3: Create voice channels in the category
@@ -349,6 +357,7 @@ client.on('interactionCreate', async interaction => {
                 } else {
                     channel.permissionOverwrites.edit(focusRole, {
                         ViewChannel: true, // Allow view of new study channels
+                        SendMessages: true, // Allow send messages for study channels
                     });
                 }
             });
@@ -366,12 +375,28 @@ client.on('interactionCreate', async interaction => {
                 await server.save();
             }
 
-            // Finalize the setup process and reply to the user
-            await interaction.editReply({ content: 'Study setup complete!' });
-
+            const embed = new EmbedBuilder()
+                .setTitle('Study Setup')
+                .setDescription('Study setup complete!')
+                .addFields([
+                    {
+                        name: 'Study Session Channel',
+                        value: `<#${textChannel.id}>`
+                    },
+                    {
+                        name: 'Voice Channels',
+                        value: `${numVoiceChannels} voice channels created`
+                    }
+                    ])
+                .setColor(0x2ECC71);
+            await interaction.editReply({ embeds: [embed], ephemeral: true });
         } catch (error) {
             console.error('Setup failed:', error);
-            await interaction.editReply({ content: 'An error occurred during setup.' });
+            const embed = new EmbedBuilder()
+             .setTitle('Error')
+             .setDescription('An error occurred during setup. Make sure I have the Manage Server and Manage Channels permissions!')
+             .setColor(0xE74C3C);
+             await interaction.editReply({ embeds: [embed], ephemeral: true });
         }
     }
 
@@ -413,7 +438,9 @@ client.on('interactionCreate', async interaction => {
 
         // Fetch leaderboard to get the user's rank
         const leaderboard = await getLeaderboard(interaction.guild.id);
-        const rank = leaderboard.findIndex(u => u.userId === user.id) + 1; // Find the user's rank in the leaderboard
+        const userRank = leaderboard.find(u => u.userId === user.id);
+
+        const rankDisplay = userRank ? `#${userRank.rank}` : "Unranked";
 
         const embed = new EmbedBuilder()
             .setTitle(`${user.username}'s Study Stats`)
@@ -423,7 +450,7 @@ client.on('interactionCreate', async interaction => {
                 { name: '🏅 Total Points 🏅', value: `\`${userData.points}\``, inline: true },
                 { name: '\u200B', value: '\u200B', inline: true },
                 { name: '🔥 Study Streak 🔥', value: `\`${userData.studyStreak}\` days`, inline: true },
-                { name: '🏆 Rank 🏆', value: rank ? `#${rank}` : 'Unranked', inline: true },
+                { name: '🏆 Rank 🏆', value: rankDisplay, inline: true },
             ])
             .setColor(0x3498DB); // Blue for info
 
@@ -517,7 +544,7 @@ client.on('interactionCreate', async interaction => {
                     duration, 
                     voiceChannelName: voiceChannel.name,
                     guildId: interaction.guild.id,
-                    pointsPerMinute: 1
+                    pointsPerMinute: 10
                 }); 
         
                 // Optionally, update the voice channel name
@@ -545,9 +572,10 @@ client.on('interactionCreate', async interaction => {
 
                         // Award points to VC members
                         const points = session.pointsPerMinute * session.duration;
+                        console.log(`Points = ${session.pointsPerMinute * session.duration}`)
                         const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
                         
-                        await awardPointsToVCMembers(voiceChannel, points, textChannel);
+                        await awardPointsToVCMembers(voiceChannel, points);
 
                         // Send completion message to text channel
                         const embedDone = new EmbedBuilder()
@@ -710,6 +738,7 @@ client.on('interactionCreate', async interaction => {
         const currentTime = Date.now();
         const actualTimeSpent = Math.floor((currentTime - session.startTime) / 1000 / 60); // Time in minutes
         const timeStudied = Math.min(actualTimeSpent, session.duration); // Cap at session duration
+        const points = timeStudied * session.pointsPerMinute;
     
         const voiceChannel = await client.channels.fetch(session.voiceChannelId);
         voiceChannel.setName("Study Completed").catch(console.error); // Rename channel
@@ -722,7 +751,7 @@ client.on('interactionCreate', async interaction => {
     
         // Award points based on actual time spent
         console.log("On Stop Command: Award Points To VC Members: " + timeStudied + " minutes");
-        await awardPointsToVCMembers(voiceChannel, timeStudied);
+        await awardPointsToVCMembers(voiceChannel, points, timeStudied);
     
         sessions.delete(sessionCodeInput); // Remove the session
     } 
@@ -789,6 +818,23 @@ client.on('interactionCreate', async interaction => {
     } 
     
     // //
+
+    // Remove channel id from the server textChannelId database
+    else if (commandName ==='removetextchannel') {
+        logEvent(serverId, 'Remove Text Channel Command Run', 'low');
+
+        let server = await Server.findOne({ where: { serverId: interaction.guild.id } });
+        if (!server) { server = await Server.create({ serverId: guildId }); }
+
+        // remove channel id
+        server.textChannelId = null;
+        await server.save();
+
+        await interaction.reply(`Text channel has been removed.`);
+    }
+
+    // //
+
     
     else if (commandName === 'setloggingchannel') {
         logEvent(serverId, 'Set Logging Channel Command Run', 'low');

@@ -3,7 +3,7 @@ const { EmbedBuilder } = require('discord.js');
 let userSessions = new Map(); // Key: userId, Value: { channelId, joinTime }
 
 // * User Data:
-async function updateUserStats(userId, serverId, studyTime) {
+async function updateUserStats(userId, serverId, studyTime, points) {
     try {
         let user = await User.findOne({ where: { userId, serverId } });
         console.log(userId);
@@ -14,7 +14,7 @@ async function updateUserStats(userId, serverId, studyTime) {
 
         user.studyStreak += 1;
         user.totalStudyTime += studyTime;
-        user.points += studyTime; // Award points based on time studied
+        user.points += points; // Award points based on time studied
 
         console.log(`User ${userId} now has ${user.points} points.`);
         await user.save();
@@ -77,20 +77,30 @@ async function endUserSession(userId, channelId, leaveTime, guildId) {
 // //
 
 // Fetch the leaderboard (top 10 users)
-async function getLeaderboard(serverId) {
-    const leaderboard = await User.findAll({
-        where: { serverId },
-        order: [['points', 'DESC']],
-        limit: 10
+async function getLeaderboard(guildId) {
+    // Fetch all users for this server
+    const users = await User.findAll({ where: { serverId: guildId } });
+
+    // Sort users by points (descending)
+    users.sort((a, b) => b.points - a.points);
+
+    // Initialize an array to hold ranked users
+    let rank = 1;
+    let rankedUsers = [];
+
+    // Assign ranks, handling ties
+    users.forEach((user, index) => {
+        // If not the first user and the points are equal to the previous user, assign the same rank
+        if (index > 0 && user.points === users[index - 1].points) {
+            rankedUsers.push({ ...user.dataValues, rank: rankedUsers[index - 1].rank });
+        } else {
+            // Otherwise, assign a new rank
+            rankedUsers.push({ ...user.dataValues, rank: rank });
+        }
+        rank++;
     });
 
-    // return leaderboard.map((user, index) => ({
-    //     userId: user.userId,
-    //     points: user.points
-    // }));
-
-    // Alternatively, you can also display the leaderboard as a formatted string:
-    return leaderboard.map((user, index) => `${index + 1}. <@${user.userId}> - ${user.points} points`);
+    return rankedUsers;
 }
 
 // //
@@ -114,21 +124,19 @@ function generateSessionCode() {
 // //
 
 // Award points to all members in the voice channel
-async function awardPointsToVCMembers(voiceChannel, actualStudyTime) {
+async function awardPointsToVCMembers(voiceChannel, points, actualTimeSpent) {
     const serverId = voiceChannel.guild.id;
     const members = voiceChannel.members.filter(member => !member.user.bot); // Exclude bots
     const memberIds = Array.from(members.keys()); // Extract user IDs
-    const points = actualStudyTime;
 
-    console.log(`Points: ${points}\nMembers: ${memberIds}\nServer Id: ${serverId}`);
+    console.log(`Points: ${points}\nMembers: ${memberIds}\nServer Id: ${serverId}\nTime Spent: ${actualTimeSpent}`);
 
     try {
         console.log("Main Update Method");
-        for (const memberId of memberIds) { await updateUserStats(memberId, serverId, points); }
+        for (const memberId of memberIds) { await updateUserStats(memberId, serverId, actualTimeSpent, points); }
     }
     catch(err) {
-        console.error("Backup Update Method: " + err);
-        for (const memberId of memberIds) { await awardPointsToUser(memberId, serverId, points) }
+        console.error("Points Couldn't Be Updated: " + err);
     }
 }
 
