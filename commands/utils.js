@@ -84,13 +84,13 @@ async function getLeaderboard(serverId) {
         limit: 10
     });
 
-    return leaderboard.map((user, index) => ({
-        userId: user.userId,
-        points: user.points
-    }));
+    // return leaderboard.map((user, index) => ({
+    //     userId: user.userId,
+    //     points: user.points
+    // }));
 
     // Alternatively, you can also display the leaderboard as a formatted string:
-    // return leaderboard.map((user, index) => `${index + 1}. <@${user.userId}> - ${user.points} points`);
+    return leaderboard.map((user, index) => `${index + 1}. <@${user.userId}> - ${user.points} points`);
 }
 
 // //
