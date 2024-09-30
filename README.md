@@ -20,6 +20,10 @@
 ## Have a bug?
 Submit an `Issue` and tell me what's wrong.
 
+## Install Dependencies
+Do `npm install` to download all dependancies.
+
+
 ## Commands:
 
 Current Codes:
