@@ -1,7 +1,7 @@
 <div align="center">
     <img src="./image.png" height="128" >
 </div>
-<h1 align="center">Levelling Discord Bot</h1>
+<h1 align="center">Study Discord Bot</h1>
 <div align="center">
     <a href="https://github.com/JayNightmare/Study-Bot/graphs/contributors">
       <img alt="GitHub Contributors" src="https://img.shields.io/github/contributors/JayNightmare/Study-Bot?color=2db94d" />
