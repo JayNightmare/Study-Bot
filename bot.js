@@ -1,6 +1,9 @@
 const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, InteractionType, EmbedBuilder, ChannelType, PermissionsBitField } = require('discord.js');
 const { Session, Server, User } = require('./models/sequelize.js');
+const rest = new REST({ version: '10' }).setToken(process.env.TEST_TOKEN);
+const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates] });
 require('dotenv').config();
+
 const { // * User Data:
         updateUserStats,
         addUserSession,
@@ -25,11 +28,9 @@ const { // * User Data:
 const { logEvent, processLogs } = require('./commands/logEvents');
 
 
-const client = new Client({
-    intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates]
-});
 
-const rest = new REST({ version: '10' }).setToken(process.env.TEST_TOKEN);
+
+
 
 
 client.rest.on('rateLimit', (info) => {
