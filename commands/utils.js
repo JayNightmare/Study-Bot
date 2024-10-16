@@ -118,7 +118,7 @@ async function getStudyDuration(serverId) {
 
 // Helper function to generate a unique session code
 function generateSessionCode() {
-    return Math.random().toString(36).substr(2, 5).toUpperCase(); // Example: Generates a 5-character code
+    return Math.random().toString(36).substring(2, 7).toUpperCase();
 }
 
 // //
