@@ -2,6 +2,17 @@ const { logEvent, processLogs } = require("../logEvents");
 const { Session, Server, User } = require("../../models/sequelize.js");
 const { EmbedBuilder } = require("discord.js");
 
+const {
+    // * Leaderboard Data:
+    getLeaderboard,
+
+    // * Study Duration Data:
+    generateSessionCode,
+
+    // * Points Data:
+    awardPointsToVCMembers,
+} = require('../utils.js');
+
 module.exports = {
     stats: {
         async execute(interaction) {
@@ -534,6 +545,7 @@ module.exports = {
 
     leaderboard: {
         async execute(interaction) {
+            const serverId = interaction.guild.id;
             logEvent(serverId, "Leaderboard Command Run", "high");
 
             await interaction.deferReply();

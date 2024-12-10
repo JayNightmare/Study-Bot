@@ -40,23 +40,6 @@ client.rest.on('rateLimit', (info) => {
     logEvent(serverId, 'Bot is rate limited', 'low');
 });
 
-// ! Example function that adds a role with error and rate-limit handling
-// async function assignRoleWithLimitCheck(member, role) {
-//     try {
-//         await member.roles.add(role);
-//         console.log(`Added role to ${member.user.tag}`);
-//     } catch (error) {
-//         if (error.httpStatus === 429) {
-//             // Handle the rate limit
-//             const retryAfter = error.retry_after || 1000; // Retry after time in ms
-//             console.log(`Rate limit hit! Retrying after ${retryAfter}ms`);
-//             setTimeout(() => assignRoleWithLimitCheck(member, role), retryAfter);
-//         } else {
-//             console.error(`Failed to assign role: ${error.message}`);
-//         }
-//     }
-// }
-
 // Define the commands
 const commands = [
     new SlashCommandBuilder()
@@ -178,10 +161,8 @@ client.once('ready', async () => {
     console.log(`Logged in as ${client.user.tag}!`);
 
     try {
-        // Fetch all guilds (servers) the bot is in
         const guilds = await client.guilds.fetch();
 
-        // Log an event for each server the bot is in
         guilds.forEach(async (guild) => {
             const serverId = guild.id;
             logEvent(serverId, 'Bot has started up', 'low');
@@ -227,27 +208,32 @@ client.on('interactionCreate', async interaction => {
     const { commandName, options, guildId } = interaction;
     let serverId = interaction.guild.id;
 
-    if (commandName === 'setup') {
-        
-    }
-
-    // //
-
-    // * Community Commands
-    if (commandName === 'focus') { communityCommands.focus.execute(interaction, options); }
-    if (commandName === 'stats') { await communityCommands.stats.execute(interaction, options); }
-    if (commandName === 'start') { await communityCommands.start.execute(interaction, options); } 
-    if (commandName === 'status') { await communityCommands.status.execute(interaction, options); } 
-    if (commandName === 'stop') { await communityCommands.stop.execute(interaction, options) } 
-    if (commandName === 'leaderboard') { await community.leaderboard.execute(interaction, options); } 
+    try {
+        if (commandName === 'setup') {
+            
+        }
     
-    // //
-
-    // * Config Commands
-    if (commandName === 'settextchannel') { await configCommands.settextchannel.execute(interaction, options); }
-    if (commandName ==='removetextchannel') { await configCommands.removetextchannel.execute(interaction, options); }
-    if (commandName === 'setloggingchannel') { await configCommands.setloggingchannel.execute(interaction, options); }
-    if (interaction.commandName === 'setloglevel') { await configCommands.setloglevel.execute(interaction, options); }
+        // //
+    
+        // * Community Commands
+        if (commandName === 'focus') { communityCommands.focus.execute(interaction, options); }
+        if (commandName === 'stats') { await communityCommands.stats.execute(interaction, options); }
+        if (commandName === 'start') { await communityCommands.start.execute(interaction, options); } 
+        if (commandName === 'status') { await communityCommands.status.execute(interaction, options); } 
+        if (commandName === 'stop') { await communityCommands.stop.execute(interaction, options) } 
+        if (commandName === 'leaderboard') { await communityCommands.leaderboard.execute(interaction, options); } 
+        
+        // //
+    
+        // * Config Commands
+        if (commandName === 'settextchannel') { await configCommands.settextchannel.execute(interaction, options); }
+        if (commandName ==='removetextchannel') { await configCommands.removetextchannel.execute(interaction, options); }
+        if (commandName === 'setloggingchannel') { await configCommands.setloggingchannel.execute(interaction, options); }
+        if (interaction.commandName === 'setloglevel') { await configCommands.setloglevel.execute(interaction, options); }
+    } catch (e) {
+        console.error(`Error executing command ${commandName} for server ${guildId}:`, e);
+        await interaction.reply({ content: 'An error occurred while executing the command. Please try again later.', ephemeral: true });
+    }
 });
 
 // Monitor voice state updates to detect when the host leaves
