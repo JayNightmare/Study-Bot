@@ -3,7 +3,7 @@ const { Client, GatewayIntentBits, REST, Routes, SlashCommandBuilder, Interactio
 const { Session, Server, User } = require('./models/sequelize.js');
 const rest = new REST({ version: '10' }).setToken(process.env.LIVE_TOKEN);
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.GuildVoiceStates] });
-
+ 
 const { // * User Data:
         updateUserStats,
         addUserSession,
